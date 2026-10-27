@@ -1,0 +1,8 @@
+{"type":"user","message":{"role":"user","content":"첫 질문"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"첫 응답"}]}}
+{"type":"user","message":{"role":"user","content":"두 번째 질문"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"..."}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"마지막 응답 첫 줄"},{"type":"text","text":"마지막 응답 둘째 줄"}]}}
+not json
+{"type":"system","message":null}
+{"type":"last-prompt"}
