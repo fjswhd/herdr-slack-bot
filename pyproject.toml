@@ -1,0 +1,24 @@
+[project]
+name = "herdr-slack"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "fjswhd", email = "fjswhd93@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "slack-bolt>=1.30.0",
+]
+
+[project.scripts]
+herdr-slack = "herdr_slack:main"
+
+[build-system]
+requires = ["uv_build>=0.11.6,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
