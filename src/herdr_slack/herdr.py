@@ -70,6 +70,10 @@ class Herdr:
             for a in agents
         ]
 
+    def workspace_labels(self) -> dict[str, str]:
+        workspaces = self._json("workspace", "list").get("result", {}).get("workspaces", [])
+        return {w["workspace_id"]: w.get("label") or "" for w in workspaces}
+
     def read(self, pane_id: str, lines: int = 120) -> str:
         try:
             return self._call("agent", "read", pane_id, "--source", "recent-unwrapped", "--lines", str(lines))

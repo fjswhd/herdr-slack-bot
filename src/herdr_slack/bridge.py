@@ -2,10 +2,11 @@ import logging
 import re
 import threading
 import uuid
-from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 from herdr_slack import blocks
+from herdr_slack.channels import ChannelMap, channel_name
 from herdr_slack.detect import Event, event_kind
 from herdr_slack.extract import (
     choices_from_screen,
@@ -15,16 +16,21 @@ from herdr_slack.extract import (
     tail,
 )
 from herdr_slack.herdr import Agent, Herdr, HerdrError
-from herdr_slack.routing import Busy, Keys, Prompt, TextEnter, interpret
+from herdr_slack.routing import Busy, Keys, Prompt, TextEnter, interpret, split_target
 from herdr_slack.store import PaneRef, ThreadStore
-
-# post(blocks, text, thread_ts) -> 게시된 메시지 ts
-Post = Callable[[list[dict], str, str | None], str]
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")  # herdr 에이전트 이름 규칙과 동일
 ERROR_CHARS = 1000
+SENT = "white_check_mark"
+GONE = "이 pane은 더 이상 없음. `/herdr list`로 확인해 주세요."
 
 log = logging.getLogger(__name__)
+
+
+class Slack(Protocol):
+    def post(self, channel: str, blocks: list[dict], text: str, thread_ts: str | None = None) -> str: ...
+    def react(self, channel: str, ts: str, name: str) -> None: ...
+    def ensure_channel(self, name: str) -> str: ...
 
 
 def _text_blocks(text: str) -> list[dict]:
@@ -32,33 +38,54 @@ def _text_blocks(text: str) -> list[dict]:
 
 
 class Bridge:
-    def __init__(self, herdr: Herdr, store: ThreadStore, post: Post, projects_root: Path,
+    def __init__(self, herdr: Herdr, store: ThreadStore, channels: ChannelMap, slack: Slack,
+                 default_channel: str, projects_root: Path,
                  claude_projects_dir: Path = Path.home() / ".claude" / "projects"):
         self._herdr = herdr
         self._store = store
-        self._post = post
+        self._channels = channels
+        self._slack = slack
+        self._default_channel = default_channel
         self._projects_root = projects_root
         self._claude_dir = claude_projects_dir
         self._last: dict[str, str] = {}  # pane별 마지막으로 받은 상태
         self._lock = threading.Lock()  # 훅 이벤트가 여러 연결에서 동시에 들어옴
-        self._pending: dict[str, str] = {}  # [그래도 보내기]용 보류 답장. 키 → 원문
+        self._pending: dict[str, tuple[PaneRef, str]] = {}  # [그래도 보내기]용 보류 답장. 키 → (pane, 원문)
 
-    def _say(self, thread_ts: str | None, text: str) -> str:
-        return self._post(_text_blocks(text), text, thread_ts)
+    # --- Slack 출력 ---
 
-    def _say_code(self, thread_ts: str, text: str) -> None:
+    def _say(self, channel: str, text: str, thread_ts: str | None = None) -> str:
+        return self._slack.post(channel, _text_blocks(text), text, thread_ts)
+
+    def _say_code(self, channel: str, thread_ts: str, text: str) -> None:
         for part in blocks.split_text(text):
-            self._post(_text_blocks(f"```{part}```"), part[:100], thread_ts)
+            self._slack.post(channel, _text_blocks(f"```{part}```"), part[:100], thread_ts)
 
-    def _report(self, thread_ts: str, err: Exception) -> None:
+    def _report(self, channel: str, thread_ts: str | None, err: Exception) -> None:
         if isinstance(err, HerdrError):
-            self._say(thread_ts, f"⚠️ herdr 오류: {str(err)[:ERROR_CHARS]}")
+            self._say(channel, f"⚠️ herdr 오류: {str(err)[:ERROR_CHARS]}", thread_ts)
             return
         log.exception("처리 실패")
         try:
-            self._say(thread_ts, f"⚠️ 내부 오류: {type(err).__name__}. 로그를 확인해 주세요.")
+            self._say(channel, f"⚠️ 내부 오류: {type(err).__name__}. 로그를 확인해 주세요.", thread_ts)
         except Exception:
             log.exception("오류 안내 게시 실패")
+
+    def _channel_for(self, workspace_id: str) -> str:
+        """workspace 채널. 없으면 만들고, 만들 수 없으면 기본 채널."""
+        channel = self._channels.channel_of(workspace_id)
+        if channel:
+            return channel
+        try:
+            label = self._herdr.workspace_labels().get(workspace_id, "")
+            channel = self._slack.ensure_channel(channel_name(label, workspace_id))
+        except Exception:
+            log.exception("workspace 채널 생성 실패: %s", workspace_id)
+            return self._default_channel
+        self._channels.set_channel(workspace_id, channel)
+        return channel
+
+    # --- 알림 ---
 
     def _response(self, a: Agent, screen: str) -> str:
         if a.kind == "claude" and a.session_id:
@@ -92,35 +119,68 @@ class Bridge:
             # 본문을 만들지 못해도 알림 자체는 보냄. 내용은 [화면 보기]로 확인.
             log.exception("알림 본문 생성 실패: %s", a.pane_id)
             note = blocks.notification(e, "(본문을 읽지 못함)", [])
+        ref = PaneRef(a.pane_id, a.terminal_id)
         try:
-            ts = self._post(note, blocks.headline(e), None)
+            ts = self._slack.post(self._channel_for(a.workspace_id), note, blocks.headline(e), None)
         except Exception:
             log.exception("알림 게시 실패: %s", a.pane_id)
             return
-        self._store.put(ts, PaneRef(a.pane_id, a.terminal_id))
+        self._store.put(ts, ref)
+        self._channels.set_last(a.workspace_id, ref)
 
-    def _resolve(self, thread_ts: str) -> Agent | None:
-        """스레드가 가리키는 pane이 아직 같은 터미널일 때만 그 Agent를 돌려줌. 없으면 스레드에 안내."""
-        ref = self._store.get(thread_ts)
+    # --- 사용자 입력 ---
+
+    def _live(self, ref: PaneRef | None, agents: list[Agent]) -> Agent | None:
+        """기록된 pane이 아직 같은 터미널일 때만 그 Agent."""
         if ref is None:
             return None
-        a = next((a for a in self._herdr.list_agents() if a.pane_id == ref.pane_id), None)
-        if a is None or a.terminal_id != ref.terminal_id:
-            self._say(thread_ts, "이 pane은 더 이상 없음. `/herdr list`로 확인해 주세요.")
-            return None
-        return a
+        return next((a for a in agents if a.pane_id == ref.pane_id and a.terminal_id == ref.terminal_id), None)
 
-    def handle_reply(self, thread_ts: str, text: str) -> None:
+    def _pick_target(self, channel: str, text: str) -> tuple[Agent | None, str]:
+        """채널 메시지의 대상 에이전트와 보낼 본문. 정할 수 없으면 채널에 안내하고 None."""
+        ws = self._channels.workspace_of(channel)
+        if ws is None:
+            return None, text
+        agents = [a for a in self._herdr.list_agents() if a.workspace_id == ws]
+        if not agents:
+            self._say(channel, "이 workspace에 연결된 에이전트가 없음. `/herdr list`로 확인해 주세요.")
+            return None, text
+        kind, body = split_target(text, {a.kind for a in agents})
+        if kind:
+            same = [a for a in agents if a.kind == kind]
+            if len(same) > 1:
+                self._say(channel, f"`{kind}` 에이전트가 {len(same)}개라 대상을 정할 수 없음.")
+                return None, text
+            self._channels.set_last(ws, PaneRef(same[0].pane_id, same[0].terminal_id))
+            return same[0], body
+        target = self._live(self._channels.last_of(ws), agents)
+        if target is None and len(agents) == 1:
+            target = agents[0]
+        if target is None:
+            names = ", ".join(f"`{a.kind}:`" for a in agents)
+            self._say(channel, f"어느 에이전트에게 보낼지 앞에 이름을 붙여 주세요: {names}")
+        return target, body
+
+    def handle_message(self, channel: str, ts: str, text: str, thread_ts: str | None = None) -> None:
         try:
-            a = self._resolve(thread_ts)
-            if a is None:
-                return
+            if thread_ts:
+                ref = self._store.get(thread_ts)
+                if ref is None:
+                    return
+                a = self._live(ref, self._herdr.list_agents())
+                if a is None:
+                    self._say(channel, GONE, thread_ts)
+                    return
+            else:
+                a, text = self._pick_target(channel, text)
+                if a is None:
+                    return
             action = interpret(a.status, text)
             match action:
                 case Busy():
                     key = uuid.uuid4().hex[:12]
-                    self._pending[key] = text
-                    self._post(blocks.busy_notice(key), "지금 작업 중", thread_ts)
+                    self._pending[key] = (PaneRef(a.pane_id, a.terminal_id), text)
+                    self._slack.post(channel, blocks.busy_notice(key), "지금 작업 중", thread_ts)
                     return
                 case Prompt():
                     self._herdr.prompt(a.pane_id, action.text)
@@ -128,35 +188,44 @@ class Bridge:
                     self._herdr.send_keys(a.pane_id, action.keys)
                 case TextEnter():
                     self._herdr.send_text_enter(a.pane_id, action.text)
-            self._say(thread_ts, "전송됨 · 작업 중")
+            self._slack.react(channel, ts, SENT)
         except Exception as err:
-            self._report(thread_ts, err)
+            self._report(channel, thread_ts, err)
 
-    def handle_action(self, thread_ts: str, action_id: str, value: str) -> None:
+    def handle_action(self, channel: str, message_ts: str, action_id: str, value: str) -> None:
+        """버튼 처리. 알림 버튼은 그 알림의 pane, [그래도 보내기]는 보류해 둔 pane이 대상."""
         try:
-            a = self._resolve(thread_ts)
+            if action_id == "force_send":
+                pending = self._pending.pop(value, None)
+                if pending is None:
+                    self._say(channel, "보류한 답장이 만료됨(봇 재시작 등). 다시 보내 주세요.", message_ts)
+                    return
+                ref, text = pending
+            else:
+                ref, text = self._store.get(message_ts), ""
+                if ref is None:
+                    return
+            a = self._live(ref, self._herdr.list_agents())
             if a is None:
+                self._say(channel, GONE, message_ts)
                 return
             if action_id == "full":
-                self._say_code(thread_ts, self._response(a, self._herdr.read(a.pane_id)))
-            elif action_id == "screen":
-                self._say_code(thread_ts, tail(self._herdr.read(a.pane_id), 60))
-            elif action_id == "esc":
+                self._say_code(channel, message_ts, self._response(a, self._herdr.read(a.pane_id)))
+                return
+            if action_id == "screen":
+                self._say_code(channel, message_ts, tail(self._herdr.read(a.pane_id), 60))
+                return
+            if action_id == "esc":
                 self._herdr.send_keys(a.pane_id, ["esc"])
-                self._say(thread_ts, "Esc 전송됨")
             elif action_id.startswith("choice_"):
-                key = action_id.removeprefix("choice_")
-                self._herdr.send_keys(a.pane_id, [key])
-                self._say(thread_ts, f"{key} 전송됨")
+                self._herdr.send_keys(a.pane_id, [action_id.removeprefix("choice_")])
             elif action_id == "force_send":
-                text = self._pending.pop(value, None)
-                if text is None:
-                    self._say(thread_ts, "보류한 답장이 만료됨(봇 재시작 등). 다시 답장해 주세요.")
-                    return
                 self._herdr.prompt(a.pane_id, text)
-                self._say(thread_ts, "전송됨 · 작업 중")
+            self._slack.react(channel, message_ts, SENT)
         except Exception as err:
-            self._report(thread_ts, err)
+            self._report(channel, message_ts, err)
+
+    # --- 새 에이전트 ---
 
     def check_new(self, name: str) -> Path:
         if not NAME_RE.match(name):
@@ -177,6 +246,12 @@ class Bridge:
             if not any(folder.iterdir()):
                 folder.rmdir()
             raise
+        ws = pane_id.split(":")[0]
+        channel = self._channel_for(ws)
+        a = next((a for a in self._herdr.list_agents() if a.pane_id == pane_id), None)
+        if a is not None:
+            self._channels.set_last(ws, PaneRef(a.pane_id, a.terminal_id))
+        self._say(channel, f"`{name}` 시작 ({kind}, `{folder}`). 이 채널에 메시지를 쓰면 에이전트에게 전달됩니다.")
         if prompt.strip():
             self._herdr.prompt(pane_id, prompt)
-        return f"`{name}` 시작 ({kind}, `{folder}`)"
+        return f"`{name}` 시작 ({kind}) → <#{channel}>"

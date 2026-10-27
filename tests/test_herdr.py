@@ -89,3 +89,8 @@ def test_create_workspace_missing_pane_becomes_herdr_error():
     with pytest.raises(HerdrError):
         Herdr(run=fake_run(stdout='{"result":{}}')).create_workspace(Path("C:/x"), "x")
 
+
+
+def test_workspace_labels():
+    out = '{"result":{"workspaces":[{"workspace_id":"wN6","label":"re-alive"},{"workspace_id":"wN7","label":"ai"}]}}'
+    assert Herdr(run=fake_run(stdout=out)).workspace_labels() == {"wN6": "re-alive", "wN7": "ai"}

@@ -7,6 +7,8 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from herdr_slack.blocks import agent_list, new_agent_modal
 from herdr_slack.bridge import Bridge
+from herdr_slack.channels import ChannelMap
+from herdr_slack.slack_ops import SlackOps
 from herdr_slack.config import ROOT, load_config, read_env_file
 from herdr_slack.herdr import Herdr, HerdrError
 from herdr_slack.listener import serve
@@ -24,27 +26,24 @@ def main() -> None:
                         format="%(asctime)s %(levelname)s %(name)s %(message)s", encoding="utf-8")
     cfg = load_config({**read_env_file(), **os.environ})
     app = App(token=cfg.bot_token)
-
-    def post(blocks: list[dict], text: str, thread_ts: str | None = None) -> str:
-        return app.client.chat_postMessage(channel=cfg.channel_id, blocks=blocks, text=text,
-                                           thread_ts=thread_ts)["ts"]
-
-    bridge = Bridge(Herdr(), ThreadStore(ROOT / "threads.json"), post, cfg.projects_root)
+    slack = SlackOps(app.client, cfg.user_id)
+    bridge = Bridge(Herdr(), ThreadStore(ROOT / "threads.json"), ChannelMap(ROOT / "channels.json"), slack,
+                    cfg.channel_id, cfg.projects_root)
 
     # 허용된 사용자 1명의 입력만 처리. 나머지는 응답 없이 무시.
     @app.event("message")
     def on_message(event):
-        if (event.get("channel") == cfg.channel_id and event.get("user") == cfg.user_id
-                and event.get("thread_ts") and not event.get("subtype") and not event.get("bot_id")):
-            bridge.handle_reply(event["thread_ts"], unescape_slack(event.get("text", "")))
+        if event.get("user") == cfg.user_id and not event.get("subtype") and not event.get("bot_id"):
+            bridge.handle_message(event["channel"], event["ts"], unescape_slack(event.get("text", "")),
+                                  event.get("thread_ts"))
 
     @app.action(ACTIONS)
     def on_action(ack, body, action):
         ack()
         if body["user"]["id"] != cfg.user_id:
             return
-        msg = body["message"]
-        bridge.handle_action(msg.get("thread_ts") or msg["ts"], action["action_id"], action.get("value", ""))
+        bridge.handle_action(body["channel"]["id"], body["message"]["ts"], action["action_id"],
+                             action.get("value", ""))
 
     @app.command("/herdr")
     def on_command(ack, command, client, respond):
@@ -82,7 +81,7 @@ def main() -> None:
         except Exception as err:
             log.exception("새 에이전트 시작 실패")
             result = f"⚠️ 새 에이전트 시작 실패: {str(err)[:1000]}"
-        post([{"type": "section", "text": {"type": "mrkdwn", "text": result}}], result)
+        slack.post(cfg.channel_id, [{"type": "section", "text": {"type": "mrkdwn", "text": result}}], result)
 
     serve(cfg.event_port, bridge.on_status_event)
     log.info("시작 (훅 이벤트 포트 %d)", cfg.event_port)

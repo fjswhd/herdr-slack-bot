@@ -3,8 +3,8 @@ import json
 from herdr_slack.herdr import Agent
 
 
-def agent(status="idle", seq=0, terminal="t1", pane="p", kind="claude", cwd="C:/p/clips", session_id=None):
-    return Agent(pane_id=pane, workspace_id="w", terminal_id=terminal, kind=kind,
+def agent(status="idle", seq=0, terminal="t1", pane="p", kind="claude", cwd="C:/p/clips", session_id=None, ws="w"):
+    return Agent(pane_id=pane, workspace_id=ws, terminal_id=terminal, kind=kind,
                  status=status, cwd=cwd, title="", completion_seq=seq, session_id=session_id)
 
 
