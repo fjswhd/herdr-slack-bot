@@ -68,34 +68,56 @@ def make_bridge(tmp_path, agents=(), screen="", fail_on=None, projects_root=None
     return b, herdr, posts, store
 
 
-def test_poll_posts_done_and_records_thread(tmp_path):
-    b, herdr, posts, store = make_bridge(tmp_path, agents=[agent(status="working", seq=1)])
-    b.poll_once()
-    herdr.agents = [agent(status="idle", seq=2)]
-    b.poll_once()
+def test_done_event_posts_and_records_thread(tmp_path):
+    b, herdr, posts, store = make_bridge(tmp_path, agents=[agent(status="done")])
+    b.on_status_event("p", "working")
+    b.on_status_event("p", "done")
     assert len(posts) == 1 and posts[0].thread_ts is None
     assert store.get(posts[0].ts) == PaneRef("p", "t1")
 
 
-def test_poll_done_uses_claude_session_text(tmp_path):
+def test_repeated_done_event_posts_once(tmp_path):
+    b, herdr, posts, _ = make_bridge(tmp_path, agents=[agent(status="done")])
+    b.on_status_event("p", "done")
+    b.on_status_event("p", "done")
+    assert len(posts) == 1
+
+
+def test_idle_event_posts_nothing(tmp_path):
+    b, herdr, posts, _ = make_bridge(tmp_path, agents=[agent(status="idle")])
+    b.on_status_event("p", "idle")
+    assert posts == []
+
+
+def test_event_for_unknown_pane_posts_nothing(tmp_path):
+    b, herdr, posts, _ = make_bridge(tmp_path, agents=[])
+    b.on_status_event("p", "done")
+    assert posts == []
+
+
+def test_done_uses_claude_session_text(tmp_path):
     f = tmp_path / "claude" / "C--p" / "sid.jsonl"
     f.parent.mkdir(parents=True)
     f.write_text('{"type":"assistant","message":{"content":[{"type":"text","text":"세션 응답"}]}}\n', encoding="utf-8")
-    b, herdr, posts, _ = make_bridge(tmp_path, agents=[agent(status="working", seq=1, session_id="sid")],
+    b, herdr, posts, _ = make_bridge(tmp_path, agents=[agent(status="done", session_id="sid")],
                                      screen="● 화면 응답")
-    b.poll_once()
-    herdr.agents = [agent(status="idle", seq=2, session_id="sid")]
-    b.poll_once()
+    b.on_status_event("p", "done")
     assert "세션 응답" in str(posts[0].blocks) and "화면 응답" not in str(posts[0].blocks)
 
 
-def test_poll_blocked_has_choices(tmp_path):
-    b, herdr, posts, _ = make_bridge(tmp_path, agents=[agent(status="working")],
+def test_blocked_event_has_choices(tmp_path):
+    b, herdr, posts, _ = make_bridge(tmp_path, agents=[agent(status="blocked")],
                                      screen="Proceed?\n❯ 1. Yes\n  2. No\n")
-    b.poll_once()
-    herdr.agents = [agent(status="blocked")]
-    b.poll_once()
+    b.on_status_event("p", "blocked")
     assert action_ids(posts[0].blocks) == ["choice_1", "choice_2", "esc", "screen"]
+
+
+def test_blocked_again_after_working_posts_again(tmp_path):
+    b, herdr, posts, _ = make_bridge(tmp_path, agents=[agent(status="blocked")])
+    b.on_status_event("p", "blocked")
+    b.on_status_event("p", "working")
+    b.on_status_event("p", "blocked")
+    assert len(posts) == 2
 
 
 def test_reply_sends_prompt_when_idle(tmp_path):
@@ -193,21 +215,14 @@ def test_reply_reports_internal_error(tmp_path):
     assert "내부 오류" in posts[-1].text
 
 
-def test_poll_failing_notify_still_posts_headline_and_continues(tmp_path):
-    a1, a2 = agent(pane="p1", status="working", seq=1), agent(pane="p2", status="working", seq=1)
-    b, herdr, posts, store = make_bridge(tmp_path, agents=[a1, a2])
-    b.poll_once()
-    herdr.agents = [agent(pane="p1", status="idle", seq=2), agent(pane="p2", status="idle", seq=2)]
-    calls = {"n": 0}
+def test_failing_body_still_posts_headline(tmp_path):
+    b, herdr, posts, store = make_bridge(tmp_path, agents=[agent(status="done")])
 
-    def flaky_read(pane_id, lines=120):
-        calls["n"] += 1
-        if pane_id == "p1":
-            raise RuntimeError("bad")
-        return "● ok"
-    herdr.read = flaky_read
-    b.poll_once()
-    assert len(posts) == 2 and all(store.get(p.ts) for p in posts)
+    def bad_read(pane_id, lines=120):
+        raise RuntimeError("bad")
+    herdr.read = bad_read
+    b.on_status_event("p", "done")
+    assert len(posts) == 1 and store.get(posts[0].ts)
 
 
 def test_start_new_failure_removes_empty_folder(tmp_path):

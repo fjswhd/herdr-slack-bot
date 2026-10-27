@@ -1,54 +1,28 @@
 import logging
 import os
 import re
-import threading
-import time
-from pathlib import Path
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from herdr_slack.blocks import agent_list, new_agent_modal
 from herdr_slack.bridge import Bridge
-from herdr_slack.config import load_config
+from herdr_slack.config import ROOT, load_config, read_env_file
 from herdr_slack.herdr import Herdr, HerdrError
+from herdr_slack.listener import serve
 from herdr_slack.routing import unescape_slack
 from herdr_slack.store import ThreadStore
 
-ROOT = Path(__file__).resolve().parents[2]
-POLL_SECONDS = 2
 ACTIONS = re.compile(r"^(full|screen|esc|force_send|choice_\d)$")
 USAGE = "사용법: `/herdr list` (pane 목록), `/herdr new` (새 에이전트 시작)"
 
 log = logging.getLogger("herdr_slack")
 
 
-def parse_env(text: str) -> dict[str, str]:
-    env = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        env[key.strip()] = value.strip()
-    return env
-
-
-def _poll_forever(bridge: Bridge) -> None:
-    while True:
-        try:
-            bridge.poll_once()
-        except Exception:
-            log.exception("poll 실패")
-        time.sleep(POLL_SECONDS)
-
-
 def main() -> None:
     logging.basicConfig(filename=ROOT / "herdr-slack.log", level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s", encoding="utf-8")
-    env_file = ROOT / ".env"
-    env = {**(parse_env(env_file.read_text(encoding="utf-8")) if env_file.exists() else {}), **os.environ}
-    cfg = load_config(env)
+    cfg = load_config({**read_env_file(), **os.environ})
     app = App(token=cfg.bot_token)
 
     def post(blocks: list[dict], text: str, thread_ts: str | None = None) -> str:
@@ -110,6 +84,6 @@ def main() -> None:
             result = f"⚠️ 새 에이전트 시작 실패: {str(err)[:1000]}"
         post([{"type": "section", "text": {"type": "mrkdwn", "text": result}}], result)
 
-    threading.Thread(target=_poll_forever, args=(bridge,), daemon=True).start()
-    log.info("시작")
+    serve(cfg.event_port, bridge.on_status_event)
+    log.info("시작 (훅 이벤트 포트 %d)", cfg.event_port)
     SocketModeHandler(app, cfg.app_token).start()

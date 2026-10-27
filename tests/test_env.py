@@ -1,4 +1,4 @@
-from herdr_slack.app import parse_env
+from herdr_slack.config import parse_env
 
 
 def test_parse_env_reads_key_values_and_skips_comments():

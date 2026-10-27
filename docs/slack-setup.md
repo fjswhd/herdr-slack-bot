@@ -15,7 +15,8 @@ herdr-bot을 처음 설치할 때 사용자가 직접 하는 절차.
 
 ## 2. 채널과 ID
 
-1. Slack에서 `#herdr` 채널 생성.
+1. Slack에서 `#herdr` 채널 생성. 공개·비공개 모두 가능(manifest에 두 종류의 권한 포함).
+   - manifest를 바꾼 뒤에는 **Install App**에서 다시 설치해야 새 권한이 적용됨.
 2. 채널에서 `/invite @herdr-bot`.
 3. 채널 ID: 채널 이름 클릭 → 맨 아래 `C...` 값 → `SLACK_CHANNEL_ID`.
 4. 내 사용자 ID: 내 프로필 → 더보기(⋮) → **멤버 ID 복사**(`U...`) → `SLACK_USER_ID`.
@@ -33,7 +34,21 @@ SLACK_USER_ID=U...
 
 - 새 에이전트 폴더 위치를 바꾸려면 `PROJECTS_ROOT` 추가. 기본값 `C:\Users\jmlee\projects\jmlee`.
 
-## 4. 실행
+## 4. herdr 플러그인 연결
+
+봇은 herdr 플러그인 이벤트로 pane 상태 변화를 받음. 최초 1회:
+
+```
+uv sync
+herdr plugin link C:\Users\jmlee\projects\jmlee\ai-integration
+```
+
+- 확인: `herdr plugin list`에 `jmlee.herdr-slack ... enabled`.
+- 훅 실행 기록: `herdr plugin log list --plugin jmlee.herdr-slack`.
+- 훅이 받은 이벤트 기록: `%LOCALAPPDATA%\herdr\plugins\jmlee.herdr-slack\events.log`. `bot-down`이면 봇이 꺼져 있었다는 뜻.
+- 훅 → 봇 포트 기본값 47615. 바꾸려면 `.env`에 `HERDR_SLACK_PORT` 추가.
+
+## 5. 실행
 
 ```
 uv run python -m herdr_slack
@@ -43,7 +58,7 @@ uv run python -m herdr_slack
 - 로그: 저장소 루트 `herdr-slack.log`.
 - 알림 메시지와 pane 연결 정보: 저장소 루트 `threads.json`.
 
-## 5. Windows 로그인 시 자동 실행
+## 6. Windows 로그인 시 자동 실행
 
 작업 스케줄러에 등록(PowerShell):
 
@@ -56,7 +71,7 @@ Register-ScheduledTask -TaskName "herdr-slack" -Action $action -Trigger $trigger
 
 - 콘솔 창이 보이는 것이 싫으면 `uv.exe` 대신 `pythonw`로 `.venv\Scripts\pythonw.exe -m herdr_slack` 실행.
 
-## 6. 휴대폰 알림
+## 7. 휴대폰 알림
 
 - Slack 앱 설치 후 `#herdr` 채널 알림을 **모든 새 메시지**로 설정.
 - 회사 근처 모드 등에서 알림을 끄려면 안드로이드 모드에 Slack 알림 끄기 추가.

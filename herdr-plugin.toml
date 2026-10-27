@@ -1,0 +1,10 @@
+id = "jmlee.herdr-slack"
+name = "herdr Slack bridge"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+description = "pane 상태 변화를 실행 중인 herdr-slack 봇에 전달"
+platforms = ["windows"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["uv", "run", "--no-sync", "python", "-m", "herdr_slack.hook"]

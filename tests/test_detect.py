@@ -1,59 +1,31 @@
-from herdr_slack.detect import diff, next_snapshot
-from herdr_slack.herdr import Agent
+from herdr_slack.detect import event_kind
 
 
-def agent(status="idle", seq=0, terminal="t1", pane="p", state_seq=0):
-    return Agent(pane_id=pane, workspace_id="w", terminal_id=terminal, kind="claude",
-                 status=status, cwd="C:/x", title="", completion_seq=seq, session_id=None,
-                 state_change_seq=state_seq)
+def test_into_done_is_done():
+    assert event_kind("working", "done") == "done"
 
 
-def kinds(events):
-    return [e.kind for e in events]
+def test_into_done_without_known_previous_is_done():
+    # 봇 시작 후 첫 이벤트도 상태가 바뀐 순간이므로 알림 대상
+    assert event_kind(None, "done") == "done"
 
 
-def test_first_snapshot_emits_nothing():
-    assert diff(None, [agent(status="done", seq=5)]) == []
+def test_into_idle_is_nothing():
+    # idle은 사용자가 이미 본 완료
+    assert event_kind("working", "idle") is None
 
 
-def test_working_to_blocked_emits_blocked():
-    prev = {"p": agent(status="working", seq=5)}
-    assert kinds(diff(prev, [agent(status="blocked", seq=5)])) == ["blocked"]
+def test_done_to_done_is_nothing():
+    assert event_kind("done", "done") is None
 
 
-def test_completion_seq_increase_emits_done_even_if_status_working():
-    prev = {"p": agent(status="working", seq=5)}
-    assert kinds(diff(prev, [agent(status="working", seq=6)])) == ["done"]
+def test_into_blocked_is_blocked():
+    assert event_kind("working", "blocked") == "blocked"
 
 
-def test_blocked_stays_blocked_emits_nothing():
-    prev = {"p": agent(status="blocked", seq=5)}
-    assert diff(prev, [agent(status="blocked", seq=5)]) == []
+def test_blocked_to_blocked_is_nothing():
+    assert event_kind("blocked", "blocked") is None
 
 
-def test_terminal_change_resets_baseline():
-    prev = {"p": agent(status="idle", seq=50, terminal="t1")}
-    assert diff(prev, [agent(status="idle", seq=1, terminal="t2")]) == []
-
-
-def test_seq_increase_while_blocked_emits_only_blocked():
-    prev = {"p": agent(status="working", seq=5)}
-    assert kinds(diff(prev, [agent(status="blocked", seq=6)])) == ["blocked"]
-
-
-def test_working_without_seq_keeps_last_seen_seq():
-    # herdr omits completion_seq while working; the next completion must still count once
-    snap = next_snapshot(None, [agent(status="idle", seq=139)])
-    working = [agent(status="working", seq=0)]
-    assert diff(snap, working) == []
-    snap = next_snapshot(snap, working)
-    done = [agent(status="idle", seq=140)]
-    assert kinds(diff(snap, done)) == ["done"]
-    snap = next_snapshot(snap, done)
-    assert diff(snap, done) == []
-
-
-def test_blocked_again_after_state_change_emits_blocked():
-    # 승인 직후 곧바로 다음 승인 요청이 와서 두 폴링 모두 blocked인 경우
-    prev = {"p": agent(status="blocked", seq=5, state_seq=10)}
-    assert kinds(diff(prev, [agent(status="blocked", seq=5, state_seq=12)])) == ["blocked"]
+def test_working_is_nothing():
+    assert event_kind("done", "working") is None

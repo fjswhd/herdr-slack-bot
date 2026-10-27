@@ -89,8 +89,3 @@ def test_create_workspace_missing_pane_becomes_herdr_error():
     with pytest.raises(HerdrError):
         Herdr(run=fake_run(stdout='{"result":{}}')).create_workspace(Path("C:/x"), "x")
 
-
-def test_list_agents_reads_state_change_seq():
-    out = '{"result":{"agents":[{"agent":"claude","agent_status":"blocked","pane_id":"w:p1","terminal_id":"t1","state_change_seq":7}]}}'
-    [a] = Herdr(run=fake_run(stdout=out)).list_agents()
-    assert a.state_change_seq == 7

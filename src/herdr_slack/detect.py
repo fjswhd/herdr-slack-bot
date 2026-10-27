@@ -1,38 +1,23 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Literal
 
 from herdr_slack.herdr import Agent
 
+Kind = Literal["done", "blocked"]
+
 
 @dataclass(frozen=True)
 class Event:
-    kind: Literal["done", "blocked"]
+    kind: Kind
     agent: Agent
 
 
-def diff(prev: dict[str, Agent] | None, cur: list[Agent]) -> list[Event]:
-    if prev is None:
-        return []
-    events = []
-    for a in cur:
-        old = prev.get(a.pane_id)
-        if old is not None and old.terminal_id != a.terminal_id:
-            old = None
-        if a.status == "blocked":
-            # 승인 직후 다음 승인 요청이 이어져 두 폴링 모두 blocked여도 state_change_seq 변화로 새 요청을 알아챔
-            if old is None or old.status != "blocked" or old.state_change_seq != a.state_change_seq:
-                events.append(Event("blocked", a))
-        elif old is not None and a.completion_seq > old.completion_seq:
-            events.append(Event("done", a))
-    return events
+def event_kind(prev_status: str | None, status: str) -> Kind | None:
+    """herdr 상태 변화 이벤트 중 알림 대상만 고름.
 
-
-def next_snapshot(prev: dict[str, Agent] | None, cur: list[Agent]) -> dict[str, Agent]:
-    """Keep the highest completion_seq seen per terminal, since herdr omits it while working."""
-    snap = {}
-    for a in cur:
-        old = (prev or {}).get(a.pane_id)
-        if old is not None and old.terminal_id == a.terminal_id and old.completion_seq > a.completion_seq:
-            a = replace(a, completion_seq=old.completion_seq)
-        snap[a.pane_id] = a
-    return snap
+    done은 아직 아무도 보지 않은 완료(PC에서 보고 있었다면 idle이 됨), blocked는 승인·질문 대기.
+    훅 프로세스가 이벤트마다 따로 떠서 순서가 바뀌어 도착할 수 있으므로 직전 상태가 무엇이었는지는 따지지 않음.
+    """
+    if status in ("done", "blocked") and prev_status != status:
+        return status
+    return None

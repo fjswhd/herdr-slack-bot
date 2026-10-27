@@ -1,11 +1,12 @@
 import logging
 import re
+import threading
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 
 from herdr_slack import blocks
-from herdr_slack.detect import Event, diff, next_snapshot
+from herdr_slack.detect import Event, event_kind
 from herdr_slack.extract import (
     choices_from_screen,
     find_claude_session,
@@ -38,7 +39,8 @@ class Bridge:
         self._post = post
         self._projects_root = projects_root
         self._claude_dir = claude_projects_dir
-        self._snap: dict[str, Agent] | None = None
+        self._last: dict[str, str] = {}  # pane별 마지막으로 받은 상태
+        self._lock = threading.Lock()  # 훅 이벤트가 여러 연결에서 동시에 들어옴
         self._pending: dict[str, str] = {}  # [그래도 보내기]용 보류 답장. 키 → 원문
 
     def _say(self, thread_ts: str | None, text: str) -> str:
@@ -66,12 +68,16 @@ class Bridge:
                 return text
         return last_response_from_screen(a.kind, screen) or tail(screen)
 
-    def poll_once(self) -> None:
-        agents = self._herdr.list_agents()
-        events = diff(self._snap, agents)
-        self._snap = next_snapshot(self._snap, agents)
-        for e in events:
-            self._notify(e)
+    def on_status_event(self, pane_id: str, status: str) -> None:
+        """herdr 플러그인 훅이 전달한 pane 상태 변화 1건 처리."""
+        with self._lock:
+            kind = event_kind(self._last.get(pane_id), status)
+            self._last[pane_id] = status
+        if kind is None:
+            return
+        a = next((a for a in self._herdr.list_agents() if a.pane_id == pane_id), None)
+        if a is not None:
+            self._notify(Event(kind, a))
 
     def _notify(self, e: Event) -> None:
         a = e.agent

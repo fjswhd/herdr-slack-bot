@@ -1,4 +1,5 @@
 import json
+import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -16,13 +17,15 @@ class ThreadStore:
 
     def __init__(self, path: Path):
         self._path = path
+        self._lock = threading.Lock()  # 여러 훅 이벤트가 동시에 알림을 저장할 수 있음
         self._data: dict[str, dict] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
 
     def put(self, ts: str, ref: PaneRef) -> None:
-        self._data[ts] = asdict(ref)
-        while len(self._data) > MAX_ENTRIES:
-            del self._data[next(iter(self._data))]
-        self._path.write_text(json.dumps(self._data), encoding="utf-8")
+        with self._lock:
+            self._data[ts] = asdict(ref)
+            while len(self._data) > MAX_ENTRIES:
+                del self._data[next(iter(self._data))]
+            self._path.write_text(json.dumps(self._data), encoding="utf-8")
 
     def get(self, ts: str) -> PaneRef | None:
         d = self._data.get(ts)

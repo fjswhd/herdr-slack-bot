@@ -22,7 +22,6 @@ class Agent:
     title: str
     completion_seq: int
     session_id: str | None
-    state_change_seq: int = 0
 
 
 TIMEOUT_SECONDS = 60  # agent start의 기본 대기 30초보다 길게
@@ -67,9 +66,7 @@ class Herdr:
                 cwd=a.get("cwd", ""),
                 title=a.get("terminal_title_stripped") or "",
                 completion_seq=a.get("completion_seq", 0),
-                session_id=(a.get("agent_session") or {}).get("value"),
-                state_change_seq=a.get("state_change_seq", 0),
-            )
+                session_id=(a.get("agent_session") or {}).get("value"),            )
             for a in agents
         ]
 
