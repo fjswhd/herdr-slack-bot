@@ -1,4 +1,3 @@
-import json
 from pathlib import PureWindowsPath
 
 from herdr_slack.detect import Event
@@ -6,6 +5,7 @@ from herdr_slack.extract import Choice
 from herdr_slack.herdr import Agent
 
 PREVIEW_CHARS = 600
+BLOCKED_PREVIEW_CHARS = 1500
 _HEAD = {"done": "✅ 완료", "blocked": "⚠️ 판단 필요"}
 KINDS = ("claude", "codex", "gemini")
 
@@ -33,7 +33,11 @@ def headline(event: Event) -> str:
 
 def notification(event: Event, body: str, choices: list[Choice]) -> list[dict]:
     a = event.agent
-    preview = body if len(body) <= PREVIEW_CHARS else body[:PREVIEW_CHARS] + "…"
+    if event.kind == "blocked":
+        # 질문과 선택지는 화면 맨 아래에 있으므로 끝부분을 남김
+        preview = body if len(body) <= BLOCKED_PREVIEW_CHARS else "…" + body[-BLOCKED_PREVIEW_CHARS:]
+    else:
+        preview = body if len(body) <= PREVIEW_CHARS else body[:PREVIEW_CHARS] + "…"
     if event.kind == "blocked":
         buttons = [_button(f"{c.key} {c.label[:20]}", f"choice_{c.key}", a.pane_id) for c in choices]
         buttons += [_button("거절(Esc)", "esc", a.pane_id), _button("화면 보기", "screen", a.pane_id)]
@@ -46,11 +50,11 @@ def notification(event: Event, body: str, choices: list[Choice]) -> list[dict]:
     ]
 
 
-def busy_notice(pane_id: str, text: str) -> list[dict]:
-    value = json.dumps({"pane_id": pane_id, "text": text}, ensure_ascii=False)
+def busy_notice(key: str) -> list[dict]:
+    # 버튼 value는 2000자 제한이 있어 답장 원문 대신 보관 키만 담음
     return [
         _section("지금 작업 중이라 보내지 않았습니다."),
-        {"type": "actions", "elements": [_button("그래도 보내기", "force_send", value)]},
+        {"type": "actions", "elements": [_button("그래도 보내기", "force_send", key)]},
     ]
 
 

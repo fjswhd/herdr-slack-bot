@@ -19,7 +19,8 @@ def diff(prev: dict[str, Agent] | None, cur: list[Agent]) -> list[Event]:
         if old is not None and old.terminal_id != a.terminal_id:
             old = None
         if a.status == "blocked":
-            if old is None or old.status != "blocked":
+            # 승인 직후 다음 승인 요청이 이어져 두 폴링 모두 blocked여도 state_change_seq 변화로 새 요청을 알아챔
+            if old is None or old.status != "blocked" or old.state_change_seq != a.state_change_seq:
                 events.append(Event("blocked", a))
         elif old is not None and a.completion_seq > old.completion_seq:
             events.append(Event("done", a))

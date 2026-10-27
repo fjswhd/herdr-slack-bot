@@ -1,5 +1,3 @@
-import json
-
 from blocks_util import action_ids, agent, text_of
 from herdr_slack.blocks import agent_list, busy_notice, new_agent_modal, notification, split_text
 from herdr_slack.detect import Event
@@ -34,11 +32,16 @@ def test_split_text_prefers_newline():
     assert parts == ["a" * 2000 + "\n", "b" * 2000]
 
 
-def test_busy_notice_has_force_send_with_text():
-    blocks = busy_notice("w:p1", "다음 작업")
+def test_busy_notice_button_carries_only_short_key():
+    blocks = busy_notice("k1")
     [btn] = [e for b in blocks if b["type"] == "actions" for e in b["elements"]]
-    assert btn["action_id"] == "force_send"
-    assert json.loads(btn["value"]) == {"pane_id": "w:p1", "text": "다음 작업"}
+    assert btn["action_id"] == "force_send" and btn["value"] == "k1"
+
+
+def test_blocked_preview_keeps_end_of_screen():
+    body = "old line\n" * 300 + "Do you want to proceed?"
+    t = text_of(notification(Event("blocked", agent()), body, []))
+    assert "Do you want to proceed?" in t and "…" in t
 
 
 def test_agent_list_shows_each_pane():

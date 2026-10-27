@@ -155,11 +155,66 @@ def test_action_esc_sends_esc(tmp_path):
     assert herdr.calls[-1] == ("send_keys", "p", ["esc"])
 
 
-def test_action_force_send_prompts(tmp_path):
+def test_action_force_send_prompts_pending_text(tmp_path):
     b, herdr, posts, store = make_bridge(tmp_path, agents=[agent(status="working")])
     store.put("9.0", PaneRef("p", "t1"))
-    b.handle_action("9.0", "force_send", '{"pane_id": "p", "text": "강제"}')
-    assert herdr.calls[-1] == ("prompt", "p", "강제")
+    long_text = "x" * 3000
+    b.handle_reply("9.0", long_text)
+    [btn] = [e for blk in posts[-1].blocks if blk["type"] == "actions" for e in blk["elements"]]
+    assert len(btn["value"]) < 100
+    b.handle_action("9.0", "force_send", btn["value"])
+    assert herdr.calls[-1] == ("prompt", "p", long_text)
+
+
+def test_action_force_send_unknown_key_reports_expired(tmp_path):
+    b, herdr, posts, store = make_bridge(tmp_path, agents=[agent(status="working")])
+    store.put("9.0", PaneRef("p", "t1"))
+    b.handle_action("9.0", "force_send", "nope")
+    assert herdr.calls == [] and "만료" in posts[-1].text
+
+
+def test_action_screen_splits_long_screen(tmp_path):
+    screen = "\n".join("y" * 500 for _ in range(60))
+    b, herdr, posts, store = make_bridge(tmp_path, agents=[agent(status="idle")], screen=screen)
+    store.put("9.0", PaneRef("p", "t1"))
+    b.handle_action("9.0", "screen", "p")
+    sections = [blk["text"]["text"] for p in posts for blk in p.blocks if blk["type"] == "section"]
+    assert len(posts) > 1 and all(len(t) <= 3000 for t in sections)
+
+
+def test_reply_reports_internal_error(tmp_path):
+    b, herdr, posts, store = make_bridge(tmp_path, agents=[agent(status="idle")])
+    store.put("9.0", PaneRef("p", "t1"))
+
+    def boom(*a):
+        raise RuntimeError("x")
+    herdr.prompt = boom
+    b.handle_reply("9.0", "hi")
+    assert "내부 오류" in posts[-1].text
+
+
+def test_poll_failing_notify_still_posts_headline_and_continues(tmp_path):
+    a1, a2 = agent(pane="p1", status="working", seq=1), agent(pane="p2", status="working", seq=1)
+    b, herdr, posts, store = make_bridge(tmp_path, agents=[a1, a2])
+    b.poll_once()
+    herdr.agents = [agent(pane="p1", status="idle", seq=2), agent(pane="p2", status="idle", seq=2)]
+    calls = {"n": 0}
+
+    def flaky_read(pane_id, lines=120):
+        calls["n"] += 1
+        if pane_id == "p1":
+            raise RuntimeError("bad")
+        return "● ok"
+    herdr.read = flaky_read
+    b.poll_once()
+    assert len(posts) == 2 and all(store.get(p.ts) for p in posts)
+
+
+def test_start_new_failure_removes_empty_folder(tmp_path):
+    b, herdr, posts, _ = make_bridge(tmp_path, projects_root=tmp_path, fail_on="start_agent")
+    with pytest.raises(HerdrError):
+        b.start_new("idea", "claude", "")
+    assert not (tmp_path / "idea").exists()
 
 
 def test_action_full_posts_split_response(tmp_path):

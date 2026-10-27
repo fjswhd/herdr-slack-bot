@@ -52,3 +52,45 @@ def test_cli_error_raises_herdr_error():
     h = Herdr(run=fake_run(returncode=1, stderr='{"error":"agent_blocked"}'))
     with pytest.raises(HerdrError, match="agent_blocked"):
         h.prompt("w:p1", "hi")
+
+
+def test_read_falls_back_to_visible_when_not_idle():
+    calls = []
+
+    def run(args):
+        calls.append(args)
+        if "recent-unwrapped" in args:
+            return subprocess.CompletedProcess(args, 1, "", '{"error":{"code":"agent_not_idle"}}')
+        return subprocess.CompletedProcess(args, 0, "visible screen", "")
+    assert Herdr(run=run).read("w:p1") == "visible screen"
+    assert calls[-1] == ["herdr", "agent", "read", "w:p1", "--source", "visible"]
+
+
+def test_os_error_becomes_herdr_error():
+    def run(args):
+        raise FileNotFoundError("herdr not found")
+    with pytest.raises(HerdrError, match="herdr not found"):
+        Herdr(run=run).list_agents()
+
+
+def test_timeout_becomes_herdr_error():
+    def run(args):
+        raise subprocess.TimeoutExpired(args, 60)
+    with pytest.raises(HerdrError):
+        Herdr(run=run).prompt("w:p1", "hi")
+
+
+def test_bad_json_becomes_herdr_error():
+    with pytest.raises(HerdrError):
+        Herdr(run=fake_run(stdout="not json")).list_agents()
+
+
+def test_create_workspace_missing_pane_becomes_herdr_error():
+    with pytest.raises(HerdrError):
+        Herdr(run=fake_run(stdout='{"result":{}}')).create_workspace(Path("C:/x"), "x")
+
+
+def test_list_agents_reads_state_change_seq():
+    out = '{"result":{"agents":[{"agent":"claude","agent_status":"blocked","pane_id":"w:p1","terminal_id":"t1","state_change_seq":7}]}}'
+    [a] = Herdr(run=fake_run(stdout=out)).list_agents()
+    assert a.state_change_seq == 7

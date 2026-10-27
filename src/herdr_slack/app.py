@@ -12,6 +12,7 @@ from herdr_slack.blocks import agent_list, new_agent_modal
 from herdr_slack.bridge import Bridge
 from herdr_slack.config import load_config
 from herdr_slack.herdr import Herdr, HerdrError
+from herdr_slack.routing import unescape_slack
 from herdr_slack.store import ThreadStore
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,7 +62,7 @@ def main() -> None:
     def on_message(event):
         if (event.get("channel") == cfg.channel_id and event.get("user") == cfg.user_id
                 and event.get("thread_ts") and not event.get("subtype") and not event.get("bot_id")):
-            bridge.handle_reply(event["thread_ts"], event.get("text", ""))
+            bridge.handle_reply(event["thread_ts"], unescape_slack(event.get("text", "")))
 
     @app.action(ACTIONS)
     def on_action(ack, body, action):
@@ -104,8 +105,9 @@ def main() -> None:
         ack()  # Slack은 3초 안에 응답을 요구. 에이전트 시작은 그 뒤에 진행.
         try:
             result = bridge.start_new(name, kind, prompt)
-        except (ValueError, HerdrError) as err:
-            result = f"⚠️ 새 에이전트 시작 실패: {err}"
+        except Exception as err:
+            log.exception("새 에이전트 시작 실패")
+            result = f"⚠️ 새 에이전트 시작 실패: {str(err)[:1000]}"
         post([{"type": "section", "text": {"type": "mrkdwn", "text": result}}], result)
 
     threading.Thread(target=_poll_forever, args=(bridge,), daemon=True).start()

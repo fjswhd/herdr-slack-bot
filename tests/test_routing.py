@@ -23,3 +23,10 @@ def test_interpret_blocked_digit():
 
 def test_interpret_blocked_sentence_is_text_enter():
     assert interpret("blocked", "use option b") == TextEnter("use option b")
+
+
+def test_unescape_slack_restores_symbols_and_links():
+    from herdr_slack.routing import unescape_slack
+    assert unescape_slack("if a &lt; b &amp;&amp; c -&gt; d") == "if a < b && c -> d"
+    assert unescape_slack("see <https://x.dev/a|x.dev> and <https://y.dev>") == "see https://x.dev/a and https://y.dev"
+    assert unescape_slack("&amp;lt;") == "&lt;"

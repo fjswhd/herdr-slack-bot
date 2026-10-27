@@ -83,6 +83,12 @@
 - 낯선 승인·질문 화면은 herdr가 `blocked`로 인식하지 못함. 이때 pane은 계속 `working`으로 보여 알림이 나가지 않음.
 - 이 누락은 허용. 봇은 herdr 상태 변화만 보고 화면 멈춤 감지는 하지 않음.
 
+### 4.3.2 알려진 한계: 폴링 사이에 지나간 완료
+- 봇은 2초마다 `herdr agent list`로 상태를 확인함(Windows용 Python은 herdr 소켓 이벤트 구독 불가).
+- herdr는 작업 중(`working`)일 때 `completion_seq`를 주지 않음.
+- 두 번의 확인 사이에 작업 중 → 완료 → 작업 중이 모두 지나가면 그 완료 알림은 오지 않음(대기열 메시지가 바로 이어지는 경우 등).
+- 이후 완료가 오면 정상 알림.
+
 ### 4.4 응답 추출
 - 기본: herdr 화면 텍스트(`agent read --source recent-unwrapped`)에서 마지막 응답만 잘라냄. 에이전트별 응답 시작 표시를 기준으로 자름.
   - 확인된 표시: Claude `●`, Codex `•`. Codex는 `Worked for ...` 줄로 응답 끝을 알 수 있음.

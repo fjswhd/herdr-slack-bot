@@ -2,9 +2,10 @@ from herdr_slack.detect import diff, next_snapshot
 from herdr_slack.herdr import Agent
 
 
-def agent(status="idle", seq=0, terminal="t1", pane="p"):
+def agent(status="idle", seq=0, terminal="t1", pane="p", state_seq=0):
     return Agent(pane_id=pane, workspace_id="w", terminal_id=terminal, kind="claude",
-                 status=status, cwd="C:/x", title="", completion_seq=seq, session_id=None)
+                 status=status, cwd="C:/x", title="", completion_seq=seq, session_id=None,
+                 state_change_seq=state_seq)
 
 
 def kinds(events):
@@ -50,3 +51,9 @@ def test_working_without_seq_keeps_last_seen_seq():
     assert kinds(diff(snap, done)) == ["done"]
     snap = next_snapshot(snap, done)
     assert diff(snap, done) == []
+
+
+def test_blocked_again_after_state_change_emits_blocked():
+    # 승인 직후 곧바로 다음 승인 요청이 와서 두 폴링 모두 blocked인 경우
+    prev = {"p": agent(status="blocked", seq=5, state_seq=10)}
+    assert kinds(diff(prev, [agent(status="blocked", seq=5, state_seq=12)])) == ["blocked"]

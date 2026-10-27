@@ -1,5 +1,6 @@
-import json
+import logging
 import re
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -20,6 +21,9 @@ from herdr_slack.store import PaneRef, ThreadStore
 Post = Callable[[list[dict], str, str | None], str]
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")  # herdr 에이전트 이름 규칙과 동일
+ERROR_CHARS = 1000
+
+log = logging.getLogger(__name__)
 
 
 def _text_blocks(text: str) -> list[dict]:
@@ -35,9 +39,24 @@ class Bridge:
         self._projects_root = projects_root
         self._claude_dir = claude_projects_dir
         self._snap: dict[str, Agent] | None = None
+        self._pending: dict[str, str] = {}  # [그래도 보내기]용 보류 답장. 키 → 원문
 
     def _say(self, thread_ts: str | None, text: str) -> str:
         return self._post(_text_blocks(text), text, thread_ts)
+
+    def _say_code(self, thread_ts: str, text: str) -> None:
+        for part in blocks.split_text(text):
+            self._post(_text_blocks(f"```{part}```"), part[:100], thread_ts)
+
+    def _report(self, thread_ts: str, err: Exception) -> None:
+        if isinstance(err, HerdrError):
+            self._say(thread_ts, f"⚠️ herdr 오류: {str(err)[:ERROR_CHARS]}")
+            return
+        log.exception("처리 실패")
+        try:
+            self._say(thread_ts, f"⚠️ 내부 오류: {type(err).__name__}. 로그를 확인해 주세요.")
+        except Exception:
+            log.exception("오류 안내 게시 실패")
 
     def _response(self, a: Agent, screen: str) -> str:
         if a.kind == "claude" and a.session_id:
@@ -58,13 +77,20 @@ class Bridge:
         a = e.agent
         try:
             screen = self._herdr.read(a.pane_id)
-        except HerdrError:
-            screen = ""
-        if e.kind == "blocked":
-            body, choices = tail(screen, 25), choices_from_screen(screen)
-        else:
-            body, choices = self._response(a, screen), []
-        ts = self._post(blocks.notification(e, body, choices), blocks.headline(e), None)
+            if e.kind == "blocked":
+                body, choices = tail(screen, 25), choices_from_screen(screen)
+            else:
+                body, choices = self._response(a, screen), []
+            note = blocks.notification(e, body, choices)
+        except Exception:
+            # 본문을 만들지 못해도 알림 자체는 보냄. 내용은 [화면 보기]로 확인.
+            log.exception("알림 본문 생성 실패: %s", a.pane_id)
+            note = blocks.notification(e, "(본문을 읽지 못함)", [])
+        try:
+            ts = self._post(note, blocks.headline(e), None)
+        except Exception:
+            log.exception("알림 게시 실패: %s", a.pane_id)
+            return
         self._store.put(ts, PaneRef(a.pane_id, a.terminal_id))
 
     def _resolve(self, thread_ts: str) -> Agent | None:
@@ -86,7 +112,9 @@ class Bridge:
             action = interpret(a.status, text)
             match action:
                 case Busy():
-                    self._post(blocks.busy_notice(a.pane_id, text), "지금 작업 중", thread_ts)
+                    key = uuid.uuid4().hex[:12]
+                    self._pending[key] = text
+                    self._post(blocks.busy_notice(key), "지금 작업 중", thread_ts)
                     return
                 case Prompt():
                     self._herdr.prompt(a.pane_id, action.text)
@@ -95,8 +123,8 @@ class Bridge:
                 case TextEnter():
                     self._herdr.send_text_enter(a.pane_id, action.text)
             self._say(thread_ts, "전송됨 · 작업 중")
-        except HerdrError as err:
-            self._say(thread_ts, f"⚠️ herdr 오류: {err}")
+        except Exception as err:
+            self._report(thread_ts, err)
 
     def handle_action(self, thread_ts: str, action_id: str, value: str) -> None:
         try:
@@ -104,10 +132,9 @@ class Bridge:
             if a is None:
                 return
             if action_id == "full":
-                for part in blocks.split_text(self._response(a, self._herdr.read(a.pane_id))):
-                    self._post(_text_blocks(f"```{part}```"), part[:100], thread_ts)
+                self._say_code(thread_ts, self._response(a, self._herdr.read(a.pane_id)))
             elif action_id == "screen":
-                self._say(thread_ts, f"```{tail(self._herdr.read(a.pane_id), 60)}```")
+                self._say_code(thread_ts, tail(self._herdr.read(a.pane_id), 60))
             elif action_id == "esc":
                 self._herdr.send_keys(a.pane_id, ["esc"])
                 self._say(thread_ts, "Esc 전송됨")
@@ -116,10 +143,14 @@ class Bridge:
                 self._herdr.send_keys(a.pane_id, [key])
                 self._say(thread_ts, f"{key} 전송됨")
             elif action_id == "force_send":
-                self._herdr.prompt(a.pane_id, json.loads(value)["text"])
+                text = self._pending.pop(value, None)
+                if text is None:
+                    self._say(thread_ts, "보류한 답장이 만료됨(봇 재시작 등). 다시 답장해 주세요.")
+                    return
+                self._herdr.prompt(a.pane_id, text)
                 self._say(thread_ts, "전송됨 · 작업 중")
-        except HerdrError as err:
-            self._say(thread_ts, f"⚠️ herdr 오류: {err}")
+        except Exception as err:
+            self._report(thread_ts, err)
 
     def check_new(self, name: str) -> Path:
         if not NAME_RE.match(name):
@@ -132,8 +163,14 @@ class Bridge:
     def start_new(self, name: str, kind: str, prompt: str) -> str:
         folder = self.check_new(name)
         folder.mkdir(parents=True)
-        pane_id = self._herdr.create_workspace(folder, name)
-        self._herdr.start_agent(name, kind, pane_id)
+        try:
+            pane_id = self._herdr.create_workspace(folder, name)
+            self._herdr.start_agent(name, kind, pane_id)
+        except Exception:
+            # 같은 이름으로 다시 시도할 수 있게 빈 폴더는 지움
+            if not any(folder.iterdir()):
+                folder.rmdir()
+            raise
         if prompt.strip():
             self._herdr.prompt(pane_id, prompt)
         return f"`{name}` 시작 ({kind}, `{folder}`)"
