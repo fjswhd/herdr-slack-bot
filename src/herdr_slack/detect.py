@@ -15,9 +15,12 @@ class Event:
 def event_kind(prev_status: str | None, status: str) -> Kind | None:
     """herdr 상태 변화 이벤트 중 알림 대상만 고름.
 
-    done은 아직 아무도 보지 않은 완료(PC에서 보고 있었다면 idle이 됨), blocked는 승인·질문 대기.
-    훅 프로세스가 이벤트마다 따로 떠서 순서가 바뀌어 도착할 수 있으므로 직전 상태가 무엇이었는지는 따지지 않음.
+    완료: done(아무도 보지 않은 완료) 진입, 또는 working → idle(PC 화면에 떠 있던 pane의 완료).
+    화면에 떠 있어도 사람이 보고 있다는 보장이 없으므로 알림을 보내고, 끄기는 휴대폰 쪽이 담당.
+    blocked: 승인·질문 대기 진입.
     """
     if status in ("done", "blocked") and prev_status != status:
         return status
+    if status == "idle" and prev_status == "working":
+        return "done"
     return None

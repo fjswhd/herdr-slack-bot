@@ -2,6 +2,7 @@ import logging
 import re
 import threading
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
@@ -22,6 +23,8 @@ from herdr_slack.store import PaneRef, ThreadStore
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")  # herdr 에이전트 이름 규칙과 동일
 ERROR_CHARS = 1000
 SENT = "white_check_mark"
+WORKING = "hourglass_flowing_sand"
+NOTIFY_DELAY = 15  # 끝난 뒤 이 시간 안에 다시 작업을 시작하면 알리지 않음(백그라운드 작업 대기 후 재개 등)
 GONE = "이 pane은 더 이상 없음. `/herdr list`로 확인해 주세요."
 
 log = logging.getLogger(__name__)
@@ -30,7 +33,14 @@ log = logging.getLogger(__name__)
 class Slack(Protocol):
     def post(self, channel: str, blocks: list[dict], text: str, thread_ts: str | None = None) -> str: ...
     def react(self, channel: str, ts: str, name: str) -> None: ...
+    def unreact(self, channel: str, ts: str, name: str) -> None: ...
     def ensure_channel(self, name: str) -> str: ...
+
+
+def _start_timer(delay: float, fn: Callable[[], None]) -> None:
+    t = threading.Timer(delay, fn)
+    t.daemon = True
+    t.start()
 
 
 def _text_blocks(text: str) -> list[dict]:
@@ -40,7 +50,8 @@ def _text_blocks(text: str) -> list[dict]:
 class Bridge:
     def __init__(self, herdr: Herdr, store: ThreadStore, channels: ChannelMap, slack: Slack,
                  default_channel: str, projects_root: Path,
-                 claude_projects_dir: Path = Path.home() / ".claude" / "projects"):
+                 claude_projects_dir: Path = Path.home() / ".claude" / "projects",
+                 schedule: Callable[[float, Callable[[], None]], None] | None = None):
         self._herdr = herdr
         self._store = store
         self._channels = channels
@@ -51,6 +62,9 @@ class Bridge:
         self._last: dict[str, str] = {}  # pane별 마지막으로 받은 상태
         self._lock = threading.Lock()  # 훅 이벤트가 여러 연결에서 동시에 들어옴
         self._pending: dict[str, tuple[PaneRef, str]] = {}  # [그래도 보내기]용 보류 답장. 키 → (pane, 원문)
+        self._gen: dict[str, int] = {}  # pane별 상태 변화 횟수. 대기 중인 알림이 아직 유효한지 판단
+        self._waiting: dict[str, tuple[str, str]] = {}  # ⏳ 반응을 단 사용자 메시지. pane → (채널, ts)
+        self._schedule = schedule or _start_timer
 
     # --- Slack 출력 ---
 
@@ -88,8 +102,8 @@ class Bridge:
     # --- 알림 ---
 
     def _response(self, a: Agent, screen: str) -> str:
-        if a.kind == "claude" and a.session_id:
-            path = find_claude_session(a.session_id, self._claude_dir)
+        if a.kind == "claude":
+            path = find_claude_session(a.session_id, self._claude_dir, a.cwd)
             text = last_response_from_claude_session(path) if path else None
             if text:
                 return text
@@ -100,11 +114,23 @@ class Bridge:
         with self._lock:
             kind = event_kind(self._last.get(pane_id), status)
             self._last[pane_id] = status
-        if kind is None:
-            return
-        a = next((a for a in self._herdr.list_agents() if a.pane_id == pane_id), None)
-        if a is not None:
-            self._notify(Event(kind, a))
+            gen = self._gen[pane_id] = self._gen.get(pane_id, 0) + 1
+        if kind is not None:
+            self._schedule(NOTIFY_DELAY, lambda: self._fire(pane_id, kind, gen))
+
+    def _fire(self, pane_id: str, kind: str, gen: int) -> None:
+        with self._lock:
+            if self._gen.get(pane_id) != gen:
+                return  # 기다리는 동안 상태가 다시 바뀜
+            waiting = self._waiting.pop(pane_id, None)
+        try:
+            if waiting:
+                self._slack.unreact(*waiting, WORKING)
+            a = next((a for a in self._herdr.list_agents() if a.pane_id == pane_id), None)
+            if a is not None:
+                self._notify(Event(kind, a))
+        except Exception:
+            log.exception("알림 처리 실패: %s", pane_id)
 
     def _notify(self, e: Event) -> None:
         a = e.agent
@@ -188,7 +214,7 @@ class Bridge:
                     self._herdr.send_keys(a.pane_id, action.keys)
                 case TextEnter():
                     self._herdr.send_text_enter(a.pane_id, action.text)
-            self._slack.react(channel, ts, SENT)
+            self._mark_sent(a.pane_id, channel, ts)
         except Exception as err:
             self._report(channel, thread_ts, err)
 
@@ -221,9 +247,19 @@ class Bridge:
                 self._herdr.send_keys(a.pane_id, [action_id.removeprefix("choice_")])
             elif action_id == "force_send":
                 self._herdr.prompt(a.pane_id, text)
-            self._slack.react(channel, message_ts, SENT)
+            self._mark_sent(a.pane_id, channel, message_ts)
         except Exception as err:
             self._report(channel, message_ts, err)
+
+    def _mark_sent(self, pane_id: str, channel: str, ts: str) -> None:
+        """전달 완료 ✅, 에이전트가 다시 멈출 때까지 ⏳."""
+        self._slack.react(channel, ts, SENT)
+        self._slack.react(channel, ts, WORKING)
+        with self._lock:
+            previous = self._waiting.get(pane_id)
+            self._waiting[pane_id] = (channel, ts)
+        if previous and previous != (channel, ts):
+            self._slack.unreact(*previous, WORKING)
 
     # --- 새 에이전트 ---
 

@@ -67,3 +67,13 @@ def test_other_api_errors_propagate():
             raise api_error("missing_scope")
     with pytest.raises(SlackApiError):
         SlackOps(Broken(), "U1").ensure_channel("herdr-proj")
+
+
+def test_unreact_ignores_missing_reaction():
+    class C(FakeClient):
+        def reactions_remove(self, channel, timestamp, name):
+            self.calls.append(("unreact", channel, timestamp, name))
+            raise api_error("no_reaction")
+    c = C()
+    SlackOps(c, "U1").unreact("C1", "1.0", "hourglass_flowing_sand")
+    assert c.calls == [("unreact", "C1", "1.0", "hourglass_flowing_sand")]

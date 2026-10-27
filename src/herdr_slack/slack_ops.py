@@ -22,6 +22,12 @@ class SlackOps:
         except SlackApiError as err:
             _ignore(err, "already_reacted")
 
+    def unreact(self, channel: str, ts: str, name: str) -> None:
+        try:
+            self._client.reactions_remove(channel=channel, timestamp=ts, name=name)
+        except SlackApiError as err:
+            _ignore(err, "no_reaction")
+
     def ensure_channel(self, name: str) -> str:
         """공개 채널을 만들거나 같은 이름의 기존 채널에 참여하고, 사용자를 초대한 뒤 채널 ID를 돌려줌."""
         try:

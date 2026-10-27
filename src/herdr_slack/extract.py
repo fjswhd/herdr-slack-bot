@@ -53,8 +53,15 @@ def last_response_from_claude_session(path: Path) -> str | None:
     return result
 
 
-def find_claude_session(session_id: str, projects_dir: Path = Path.home() / ".claude" / "projects") -> Path | None:
-    return next(projects_dir.glob(f"*/{session_id}.jsonl"), None)
+def find_claude_session(session_id: str, projects_dir: Path = Path.home() / ".claude" / "projects",
+                        cwd: str | None = None) -> Path | None:
+    """세션 ID의 대화 기록. herdr가 옛 세션 ID를 들고 있어 파일이 없으면, 그 작업 폴더의 가장 최근 대화 기록."""
+    exact = next(projects_dir.glob(f"*/{session_id}.jsonl"), None)
+    if exact or not cwd:
+        return exact
+    # Claude Code는 작업 폴더 경로의 영문·숫자 외 문자를 '-'로 바꾼 이름의 폴더에 기록함
+    folder = projects_dir / re.sub(r"[^A-Za-z0-9]", "-", cwd)
+    return max(folder.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, default=None)
 
 
 def choices_from_screen(screen: str) -> list[Choice]:

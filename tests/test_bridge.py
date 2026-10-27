@@ -22,6 +22,7 @@ class FakeSlack:
     def __init__(self, fail_create=False):
         self.posts: list[Post] = []
         self.reactions: list[tuple] = []
+        self.unreactions: list[tuple] = []
         self.created: list[str] = []
         self.fail_create = fail_create
 
@@ -32,6 +33,9 @@ class FakeSlack:
 
     def react(self, channel, ts, name):
         self.reactions.append((channel, ts, name))
+
+    def unreact(self, channel, ts, name):
+        self.unreactions.append((channel, ts, name))
 
     def ensure_channel(self, name):
         if self.fail_create:
@@ -84,13 +88,17 @@ class FakeHerdr:
         self.agents.append(agent(pane=pane_id, terminal="t9", kind=kind, ws="w9"))
 
 
-def make_bridge(tmp_path, agents=(), screen="", fail_on=None, projects_root=None, fail_create=False):
+def run_now(delay, fn):
+    fn()
+
+
+def make_bridge(tmp_path, agents=(), screen="", fail_on=None, projects_root=None, fail_create=False, schedule=run_now):
     herdr = FakeHerdr(list(agents), screen, fail_on)
     slack = FakeSlack(fail_create)
     store = ThreadStore(tmp_path / "threads.json")
     channels = ChannelMap(tmp_path / "channels.json")
     b = Bridge(herdr, store, channels, slack, "C-default", projects_root or tmp_path / "projects",
-               claude_projects_dir=tmp_path / "claude")
+               claude_projects_dir=tmp_path / "claude", schedule=schedule)
     return b, herdr, slack, store, channels
 
 
@@ -177,7 +185,7 @@ def test_channel_message_goes_to_last_notified_pane(tmp_path):
     channels.set_last("w", PaneRef("w:p2", "t2"))
     b.handle_message("C1", "50.0", "다음 작업")
     assert herdr.calls[-1] == ("prompt", "w:p2", "다음 작업")
-    assert slack.reactions[-1] == ("C1", "50.0", "white_check_mark")
+    assert ("C1", "50.0", "white_check_mark") in slack.reactions
 
 
 def test_channel_message_with_kind_prefix_targets_that_agent(tmp_path):
@@ -289,7 +297,7 @@ def test_action_choice_sends_key_and_reacts(tmp_path):
     store.put("9.0", PaneRef("p", "t1"))
     b.handle_action("C1", "9.0", "choice_2", "p")
     assert herdr.calls[-1] == ("send_keys", "p", ["2"])
-    assert slack.reactions[-1] == ("C1", "9.0", "white_check_mark")
+    assert ("C1", "9.0", "white_check_mark") in slack.reactions
 
 
 def test_action_esc_sends_esc(tmp_path):
@@ -353,3 +361,67 @@ def test_start_new_failure_removes_empty_folder(tmp_path):
     with pytest.raises(HerdrError):
         b.start_new("idea", "claude", "")
     assert not (tmp_path / "idea").exists()
+
+
+# --- 알림 대기와 진행 표시 ---
+
+def test_resume_within_delay_cancels_notification(tmp_path):
+    timers = []
+    b, herdr, slack, _, _ = make_bridge(tmp_path, agents=[agent(status="done")],
+                                        schedule=lambda d, fn: timers.append(fn))
+    b.on_status_event("p", "working")
+    b.on_status_event("p", "done")
+    b.on_status_event("p", "working")
+    for fn in timers:
+        fn()
+    assert slack.posts == []
+
+
+def test_notification_fires_after_delay_when_still_done(tmp_path):
+    timers = []
+    b, herdr, slack, _, _ = make_bridge(tmp_path, agents=[agent(status="done")],
+                                        schedule=lambda d, fn: timers.append((d, fn)))
+    b.on_status_event("p", "working")
+    b.on_status_event("p", "done")
+    [(delay, fn)] = timers
+    assert delay == 15
+    fn()
+    assert len(slack.posts) == 1
+
+
+def test_working_to_idle_notifies(tmp_path):
+    b, herdr, slack, _, _ = make_bridge(tmp_path, agents=[agent(status="idle")])
+    b.on_status_event("p", "working")
+    b.on_status_event("p", "idle")
+    assert len(slack.posts) == 1
+
+
+def test_sent_message_shows_hourglass_until_completion(tmp_path):
+    b, herdr, slack, _, channels = make_bridge(tmp_path, agents=[agent(pane="w:p1", status="idle")])
+    channels.set_channel("w", "C1")
+    b.handle_message("C1", "50.0", "작업해줘")
+    assert ("C1", "50.0", "white_check_mark") in slack.reactions
+    assert ("C1", "50.0", "hourglass_flowing_sand") in slack.reactions
+    b.on_status_event("w:p1", "working")
+    assert slack.unreactions == []
+    b.on_status_event("w:p1", "idle")
+    assert slack.unreactions == [("C1", "50.0", "hourglass_flowing_sand")]
+
+
+def test_hourglass_removed_on_blocked(tmp_path):
+    b, herdr, slack, _, channels = make_bridge(tmp_path, agents=[agent(pane="w:p1", status="idle")])
+    channels.set_channel("w", "C1")
+    b.handle_message("C1", "50.0", "작업해줘")
+    b.on_status_event("w:p1", "working")
+    b.on_status_event("w:p1", "blocked")
+    assert slack.unreactions == [("C1", "50.0", "hourglass_flowing_sand")]
+
+
+def test_claude_stale_session_uses_newest_transcript_in_cwd(tmp_path):
+    f = tmp_path / "claude" / "C--p-clips" / "real.jsonl"
+    f.parent.mkdir(parents=True)
+    f.write_text('{"type":"assistant","message":{"content":[{"type":"text","text":"최신 응답"}]}}\n', encoding="utf-8")
+    a = agent(status="done", session_id="stale", cwd="C:/p/clips")
+    b, herdr, slack, _, _ = make_bridge(tmp_path, agents=[a], screen="● 화면 응답")
+    b.on_status_event("p", "done")
+    assert "최신 응답" in str(slack.posts[0].blocks)

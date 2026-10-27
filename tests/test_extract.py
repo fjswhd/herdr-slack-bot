@@ -68,3 +68,23 @@ def test_choices_keep_only_last_group():
 
 def test_tail_returns_last_lines_trimmed():
     assert tail("a  \nb\nc   \n\n", 2) == "b\nc"
+
+
+def test_find_claude_session_falls_back_to_newest_in_cwd(tmp_path):
+    import os
+    d = tmp_path / "C--Users-me-proj"
+    d.mkdir()
+    old, new = d / "old.jsonl", d / "new.jsonl"
+    old.write_text("")
+    new.write_text("")
+    os.utime(old, (1000, 1000))
+    os.utime(new, (2000, 2000))
+    assert find_claude_session("stale-id", tmp_path, cwd=r"C:\Users\me\proj") == new
+
+
+def test_find_claude_session_prefers_exact_id(tmp_path):
+    d = tmp_path / "C--Users-me-proj"
+    d.mkdir()
+    (d / "sid.jsonl").write_text("")
+    (d / "other.jsonl").write_text("")
+    assert find_claude_session("sid", tmp_path, cwd=r"C:\Users\me\proj") == d / "sid.jsonl"

@@ -10,9 +10,14 @@ def test_into_done_without_known_previous_is_done():
     assert event_kind(None, "done") == "done"
 
 
-def test_into_idle_is_nothing():
-    # idle은 사용자가 이미 본 완료
-    assert event_kind("working", "idle") is None
+def test_working_to_idle_is_done():
+    # PC 화면에 떠 있던 pane의 완료도 알림(알림 끄기는 휴대폰이 담당)
+    assert event_kind("working", "idle") == "done"
+
+
+def test_done_to_idle_is_nothing():
+    # 이미 알린 완료를 PC에서 확인한 것
+    assert event_kind("done", "idle") is None
 
 
 def test_done_to_done_is_nothing():
