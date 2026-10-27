@@ -6,6 +6,8 @@ from herdr_slack.herdr import Agent
 
 PREVIEW_CHARS = 600
 BLOCKED_PREVIEW_CHARS = 1500
+MARKDOWN_PREVIEW_CHARS = 3000  # Slack이 서식을 렌더링하므로 휴대폰에서 바로 읽을 수 있게 길게
+MARKDOWN_PART_CHARS = 11000  # Slack markdown 블록 한도 12,000자 안쪽
 _HEAD = {"done": "✅ 완료", "blocked": "⚠️ 판단 필요"}
 KINDS = ("claude", "codex", "gemini")
 
@@ -31,9 +33,16 @@ def headline(event: Event) -> str:
     return f"{_HEAD[event.kind]} {location(event.agent)}"
 
 
-def notification(event: Event, body: str, choices: list[Choice]) -> list[dict]:
+def markdown_block(text: str) -> dict:
+    """표준 Markdown을 Slack이 제목·표·코드 블록 등으로 바꿔 렌더링하는 블록."""
+    return {"type": "markdown", "text": text}
+
+
+def notification(event: Event, body: str, choices: list[Choice], markdown: bool = False) -> list[dict]:
     a = event.agent
-    if event.kind == "blocked":
+    if markdown:
+        preview = body if len(body) <= MARKDOWN_PREVIEW_CHARS else body[:MARKDOWN_PREVIEW_CHARS] + "…"
+    elif event.kind == "blocked":
         # 질문과 선택지는 화면 맨 아래에 있으므로 끝부분을 남김
         preview = body if len(body) <= BLOCKED_PREVIEW_CHARS else "…" + body[-BLOCKED_PREVIEW_CHARS:]
     else:
@@ -45,7 +54,7 @@ def notification(event: Event, body: str, choices: list[Choice]) -> list[dict]:
         buttons = [_button("전체 보기", "full", a.pane_id), _button("화면 보기", "screen", a.pane_id)]
     return [
         _section(f"*{_HEAD[event.kind]}*  `{location(a)}`"),
-        _section(_code(preview)),
+        markdown_block(preview) if markdown else _section(_code(preview)),
         {"type": "actions", "elements": buttons},
     ]
 

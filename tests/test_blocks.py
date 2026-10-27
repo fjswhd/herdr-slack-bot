@@ -58,3 +58,16 @@ def test_new_agent_modal_fields():
 def test_headline_for_push_text():
     from herdr_slack.blocks import headline
     assert headline(Event("done", agent(kind="codex", cwd="C:/p/game"))) == "✅ 완료 game · codex"
+
+
+def test_markdown_body_uses_markdown_block():
+    blocks = notification(Event("done", agent()), "## 제목\n**굵게**", [], markdown=True)
+    md = [b for b in blocks if b["type"] == "markdown"]
+    assert md == [{"type": "markdown", "text": "## 제목\n**굵게**"}]
+    assert "```" not in text_of(blocks)
+
+
+def test_markdown_preview_limit_3000():
+    blocks = notification(Event("done", agent()), "x" * 5000, [], markdown=True)
+    [md] = [b for b in blocks if b["type"] == "markdown"]
+    assert len(md["text"]) == 3001 and md["text"].endswith("…")

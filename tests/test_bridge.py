@@ -425,3 +425,20 @@ def test_claude_stale_session_uses_newest_transcript_in_cwd(tmp_path):
     b, herdr, slack, _, _ = make_bridge(tmp_path, agents=[a], screen="● 화면 응답")
     b.on_status_event("p", "done")
     assert "최신 응답" in str(slack.posts[0].blocks)
+
+
+def test_claude_session_response_is_sent_as_markdown(tmp_path):
+    f = tmp_path / "claude" / "C--p" / "sid.jsonl"
+    f.parent.mkdir(parents=True)
+    f.write_text('{"type":"assistant","message":{"content":[{"type":"text","text":"**응답**"}]}}' + chr(10), encoding="utf-8")
+    b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="done", session_id="sid")])
+    b.on_status_event("p", "done")
+    assert {"type": "markdown", "text": "**응답**"} in slack.posts[0].blocks
+    b.handle_action("C-herdr-proj", slack.posts[0].ts, "full", "p")
+    assert slack.posts[-1].blocks == [{"type": "markdown", "text": "**응답**"}]
+
+
+def test_screen_response_stays_code_block(tmp_path):
+    b, herdr, slack, _, _ = make_bridge(tmp_path, agents=[agent(status="done", kind="codex")], screen="• 화면 응답")
+    b.on_status_event("p", "done")
+    assert not [blk for blk in slack.posts[0].blocks if blk["type"] == "markdown"]

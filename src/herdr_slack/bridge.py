@@ -101,13 +101,14 @@ class Bridge:
 
     # --- 알림 ---
 
-    def _response(self, a: Agent, screen: str) -> str:
+    def _response(self, a: Agent, screen: str) -> tuple[str, bool]:
+        """마지막 응답과 Markdown 여부. 대화 기록의 응답은 Markdown, 화면에서 잘라낸 텍스트는 아님."""
         if a.kind == "claude":
-            path = find_claude_session(a.session_id, self._claude_dir, a.cwd)
+            path = find_claude_session(a.session_id or "", self._claude_dir, a.cwd)
             text = last_response_from_claude_session(path) if path else None
             if text:
-                return text
-        return last_response_from_screen(a.kind, screen) or tail(screen)
+                return text, True
+        return last_response_from_screen(a.kind, screen) or tail(screen), False
 
     def on_status_event(self, pane_id: str, status: str) -> None:
         """herdr 플러그인 훅이 전달한 pane 상태 변화 1건 처리."""
@@ -137,10 +138,10 @@ class Bridge:
         try:
             screen = self._herdr.read(a.pane_id)
             if e.kind == "blocked":
-                body, choices = tail(screen, 25), choices_from_screen(screen)
+                body, choices, md = tail(screen, 25), choices_from_screen(screen), False
             else:
-                body, choices = self._response(a, screen), []
-            note = blocks.notification(e, body, choices)
+                (body, md), choices = self._response(a, screen), []
+            note = blocks.notification(e, body, choices, markdown=md)
         except Exception:
             # 본문을 만들지 못해도 알림 자체는 보냄. 내용은 [화면 보기]로 확인.
             log.exception("알림 본문 생성 실패: %s", a.pane_id)
@@ -236,7 +237,12 @@ class Bridge:
                 self._say(channel, GONE, message_ts)
                 return
             if action_id == "full":
-                self._say_code(channel, message_ts, self._response(a, self._herdr.read(a.pane_id)))
+                text, md = self._response(a, self._herdr.read(a.pane_id))
+                if md:
+                    for part in blocks.split_text(text, blocks.MARKDOWN_PART_CHARS):
+                        self._slack.post(channel, [blocks.markdown_block(part)], part[:100], message_ts)
+                else:
+                    self._say_code(channel, message_ts, text)
                 return
             if action_id == "screen":
                 self._say_code(channel, message_ts, tail(self._herdr.read(a.pane_id), 60))
