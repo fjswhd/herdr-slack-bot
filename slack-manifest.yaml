@@ -1,0 +1,27 @@
+display_information:
+  name: herdr-bot
+  description: herdr 에이전트 알림과 제어
+features:
+  bot_user:
+    display_name: herdr-bot
+    always_online: true
+  slash_commands:
+    - command: /herdr
+      description: herdr pane 목록, 새 에이전트 시작
+      usage_hint: list | new
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - channels:history
+      - commands
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.channels
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

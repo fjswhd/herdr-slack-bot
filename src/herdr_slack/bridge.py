@@ -121,12 +121,16 @@ class Bridge:
         except HerdrError as err:
             self._say(thread_ts, f"⚠️ herdr 오류: {err}")
 
-    def start_new(self, name: str, kind: str, prompt: str) -> str:
+    def check_new(self, name: str) -> Path:
         if not NAME_RE.match(name):
             raise ValueError("이름은 영문 소문자로 시작하고 소문자·숫자·-·_ 만 사용 (최대 32자)")
         folder = self._projects_root / name
         if folder.exists():
             raise ValueError(f"이미 있는 폴더: {folder}")
+        return folder
+
+    def start_new(self, name: str, kind: str, prompt: str) -> str:
+        folder = self.check_new(name)
         folder.mkdir(parents=True)
         pane_id = self._herdr.create_workspace(folder, name)
         self._herdr.start_agent(name, kind, pane_id)

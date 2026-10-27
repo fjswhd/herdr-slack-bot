@@ -1,7 +1,7 @@
 [project]
 name = "herdr-slack"
 version = "0.1.0"
-description = "Add your description here"
+description = "herdr 에이전트를 Slack으로 알림·제어하는 봇"
 readme = "README.md"
 authors = [
     { name = "fjswhd", email = "fjswhd93@gmail.com" }
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-herdr-slack = "herdr_slack:main"
+herdr-slack = "herdr_slack.app:main"
 
 [build-system]
 requires = ["uv_build>=0.11.6,<0.12.0"]
