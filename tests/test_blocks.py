@@ -50,3 +50,8 @@ def test_new_agent_modal_fields():
     m = new_agent_modal()
     ids = [b["block_id"] for b in m["blocks"]]
     assert m["callback_id"] == "new_agent" and ids == ["name", "kind", "prompt"]
+
+
+def test_headline_for_push_text():
+    from herdr_slack.blocks import headline
+    assert headline(Event("done", agent(kind="codex", cwd="C:/p/game"))) == "✅ 완료 game · codex"

@@ -27,6 +27,10 @@ def _code(text: str) -> str:
     return f"```{text}```" if text.strip() else "_(내용 없음)_"
 
 
+def headline(event: Event) -> str:
+    return f"{_HEAD[event.kind]} {location(event.agent)}"
+
+
 def notification(event: Event, body: str, choices: list[Choice]) -> list[dict]:
     a = event.agent
     preview = body if len(body) <= PREVIEW_CHARS else body[:PREVIEW_CHARS] + "…"
