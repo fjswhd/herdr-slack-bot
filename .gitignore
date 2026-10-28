@@ -5,3 +5,4 @@ __pycache__/
 herdr-slack.log
 threads.json
 channels.json
+herdr-slack.pid
