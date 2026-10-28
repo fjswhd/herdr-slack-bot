@@ -37,7 +37,7 @@ SLACK_USER_ID=U...
 
 ## 4. herdr 플러그인 연결
 
-봇은 herdr 플러그인 이벤트로 pane 상태 변화를 받음. 최초 1회:
+봇은 herdr 플러그인으로 동작함. herdr가 시작될 때 봇 서버가 함께 켜지고, pane 상태 변화를 플러그인 이벤트로 받음. 최초 1회:
 
 ```
 uv sync
@@ -45,32 +45,33 @@ herdr plugin link C:\Users\jmlee\projects\jmlee\ai-integration
 ```
 
 - 확인: `herdr plugin list`에 `jmlee.herdr-slack ... enabled`.
-- 훅 실행 기록: `herdr plugin log list --plugin jmlee.herdr-slack`.
+- 의존성이 바뀌면 `uv sync`를 직접 실행(링크된 플러그인은 build 단계를 실행하지 않음).
+
+## 5. 실행과 중지
+
+- 자동: herdr 서버가 시작될 때 startup 훅이 봇을 콘솔 창 없이 띄움. 이미 실행 중이면 건너뜀.
+- herdr 메뉴의 플러그인 동작, 또는 명령:
+
+```
+herdr plugin action invoke jmlee.herdr-slack.start
+herdr plugin action invoke jmlee.herdr-slack.stop
+herdr plugin action invoke jmlee.herdr-slack.status
+```
+
+- 동작 결과: `herdr plugin log list --plugin jmlee.herdr-slack`의 `stdout`.
+- 실행 여부 판단: 훅 이벤트 포트(기본 47615)가 응답하는지. 바꾸려면 `.env`에 `HERDR_SLACK_PORT` 추가.
+- 직접 실행도 가능: `uv run python -m herdr_slack`. 이때는 pid 파일이 없어 stop 동작으로 끌 수 없음.
+- 기록 위치(모두 저장소 루트):
+  - 봇 로그: `herdr-slack.log`
+  - pid: `herdr-slack.pid`
+  - 알림 메시지 ↔ pane: `threads.json`
+  - workspace ↔ 채널: `channels.json`
 - 훅이 받은 이벤트 기록: `%LOCALAPPDATA%\herdr\plugins\jmlee.herdr-slack\events.log`. `bot-down`이면 봇이 꺼져 있었다는 뜻.
-- 훅 → 봇 포트 기본값 47615. 바꾸려면 `.env`에 `HERDR_SLACK_PORT` 추가.
 
-## 5. 실행
+## 6. 주의
 
-```
-uv run python -m herdr_slack
-```
-
-- herdr가 실행 중이어야 함.
-- 로그: 저장소 루트 `herdr-slack.log`.
-- 알림 메시지와 pane 연결 정보: 저장소 루트 `threads.json`.
-
-## 6. Windows 로그인 시 자동 실행
-
-작업 스케줄러에 등록(PowerShell):
-
-```powershell
-$repo = "C:\Users\jmlee\projects\jmlee\ai-integration"
-$action = New-ScheduledTaskAction -Execute "uv.exe" -Argument "run python -m herdr_slack" -WorkingDirectory $repo
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-Register-ScheduledTask -TaskName "herdr-slack" -Action $action -Trigger $trigger
-```
-
-- 콘솔 창이 보이는 것이 싫으면 `uv.exe` 대신 `pythonw`로 `.venv\Scripts\pythonw.exe -m herdr_slack` 실행.
+- startup 훅은 봇을 한 번 띄울 뿐 감시하지 않음. 봇이 죽으면 start 동작으로 다시 띄움.
+- herdr 서버를 내려도 봇은 남아 있음. 필요하면 stop 동작으로 끔.
 
 ## 7. 휴대폰 알림
 
