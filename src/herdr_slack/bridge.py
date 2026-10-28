@@ -65,6 +65,7 @@ class Bridge:
         self._gen: dict[str, int] = {}  # pane별 상태 변화 횟수. 대기 중인 알림이 아직 유효한지 판단
         self._waiting: dict[str, tuple[str, str]] = {}  # ⏳ 반응을 단 사용자 메시지. pane → (채널, ts)
         self._schedule = schedule or _start_timer
+        self._notified: dict[str, str] = {}  # pane별 마지막으로 알린 응답. 같은 응답 반복 알림 방지
 
     # --- Slack 출력 ---
 
@@ -101,13 +102,16 @@ class Bridge:
 
     # --- 알림 ---
 
-    def _response(self, a: Agent, screen: str) -> tuple[str, bool]:
-        """마지막 응답과 Markdown 여부. 대화 기록의 응답은 Markdown, 화면에서 잘라낸 텍스트는 아님."""
+    def _response(self, a: Agent, screen: str) -> tuple[str, bool] | None:
+        """마지막 응답과 Markdown 여부. 대화 기록의 응답은 Markdown, 화면에서 잘라낸 텍스트는 아님.
+
+        Claude 대화 기록에 마지막 입력 뒤 응답이 없으면(Esc로 중단 등) None.
+        """
         if a.kind == "claude":
             path = find_claude_session(a.session_id or "", self._claude_dir, a.cwd)
-            text = last_response_from_claude_session(path) if path else None
-            if text:
-                return text, True
+            if path:
+                text = last_response_from_claude_session(path)
+                return (text, True) if text else None
         return last_response_from_screen(a.kind, screen) or tail(screen), False
 
     def on_status_event(self, pane_id: str, status: str) -> None:
@@ -140,7 +144,12 @@ class Bridge:
             if e.kind == "blocked":
                 body, choices, md = tail(screen, 25), choices_from_screen(screen), False
             else:
-                (body, md), choices = self._response(a, screen), []
+                response = self._response(a, screen)
+                # 새 응답이 없거나(중단) 직전에 알린 응답과 같으면 이전 응답이 새 답처럼 보이므로 알리지 않음
+                if response is None or self._notified.get(a.pane_id) == response[0]:
+                    return
+                (body, md), choices = response, []
+                self._notified[a.pane_id] = body
             note = blocks.notification(e, body, choices, markdown=md)
         except Exception:
             # 본문을 만들지 못해도 알림 자체는 보냄. 내용은 [화면 보기]로 확인.
@@ -237,7 +246,7 @@ class Bridge:
                 self._say(channel, GONE, message_ts)
                 return
             if action_id == "full":
-                text, md = self._response(a, self._herdr.read(a.pane_id))
+                text, md = self._response(a, self._herdr.read(a.pane_id)) or ("(새 응답 없음)", False)
                 if md:
                     for part in blocks.split_text(text, blocks.MARKDOWN_PART_CHARS):
                         self._slack.post(channel, [blocks.markdown_block(part)], part[:100], message_ts)

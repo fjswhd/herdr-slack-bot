@@ -34,13 +34,29 @@ def last_response_from_screen(kind: str, screen: str) -> str | None:
     return _trim(lines[begin:end]) or None
 
 
+def _is_user_input(entry: dict) -> bool:
+    """사람이 입력한 프롬프트나 중단 표시. 도구 실행 결과만 담긴 user 항목은 제외."""
+    if entry.get("type") != "user":
+        return False
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return True
+    return isinstance(content, list) and any(c.get("type") == "text" for c in content)
+
+
 def last_response_from_claude_session(path: Path) -> str | None:
+    """마지막 턴의 응답. 마지막 사용자 입력 뒤에 응답이 없으면(Esc로 중단 등) None."""
     result = None
     with path.open(encoding="utf-8") as f:
         for line in f:
             try:
                 entry = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            if _is_user_input(entry):
+                result = None
                 continue
             if entry.get("type") != "assistant":
                 continue

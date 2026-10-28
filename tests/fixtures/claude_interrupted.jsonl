@@ -1,0 +1,4 @@
+{"type":"user","message":{"role":"user","content":"첫 질문"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"이전 응답"}]}}
+{"type":"user","message":{"role":"user","content":"새 질문"}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}

@@ -88,3 +88,11 @@ def test_find_claude_session_prefers_exact_id(tmp_path):
     (d / "sid.jsonl").write_text("")
     (d / "other.jsonl").write_text("")
     assert find_claude_session("sid", tmp_path, cwd=r"C:\Users\me\proj") == d / "sid.jsonl"
+
+
+def test_claude_session_interrupted_turn_has_no_new_response():
+    assert last_response_from_claude_session(FIXTURES / "claude_interrupted.jsonl") is None
+
+
+def test_claude_session_tool_results_do_not_hide_final_response():
+    assert last_response_from_claude_session(FIXTURES / "claude_tool_turn.jsonl") == "최종 응답"

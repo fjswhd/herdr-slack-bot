@@ -116,8 +116,10 @@ def test_done_event_creates_workspace_channel_and_posts_there(tmp_path):
 
 def test_second_event_reuses_channel(tmp_path):
     b, herdr, slack, _, _ = make_bridge(tmp_path, agents=[agent(status="done")])
+    herdr.screen = "● 첫 응답"
     b.on_status_event("p", "done")
     b.on_status_event("p", "working")
+    herdr.screen = "● 두 번째 응답"
     b.on_status_event("p", "done")
     assert slack.created == ["herdr-proj"] and len(slack.posts) == 2
 
@@ -442,3 +444,27 @@ def test_screen_response_stays_code_block(tmp_path):
     b, herdr, slack, _, _ = make_bridge(tmp_path, agents=[agent(status="done", kind="codex")], screen="• 화면 응답")
     b.on_status_event("p", "done")
     assert not [blk for blk in slack.posts[0].blocks if blk["type"] == "markdown"]
+
+
+def test_interrupted_claude_turn_posts_nothing_and_clears_hourglass(tmp_path):
+    import shutil
+    from pathlib import Path
+    d = tmp_path / "claude" / "C--p"
+    d.mkdir(parents=True)
+    shutil.copy(Path(__file__).parent / "fixtures" / "claude_interrupted.jsonl", d / "sid.jsonl")
+    b, herdr, slack, _, channels = make_bridge(tmp_path, agents=[agent(pane="w:p1", status="idle", session_id="sid")])
+    channels.set_channel("w", "C1")
+    b.handle_message("C1", "50.0", "새 질문")
+    b.on_status_event("w:p1", "working")
+    b.on_status_event("w:p1", "idle")
+    assert slack.posts == []
+    assert slack.unreactions == [("C1", "50.0", "hourglass_flowing_sand")]
+
+
+def test_same_screen_response_twice_posts_once(tmp_path):
+    b, herdr, slack, _, _ = make_bridge(tmp_path, agents=[agent(status="idle", kind="codex")], screen="• 같은 응답")
+    b.on_status_event("p", "working")
+    b.on_status_event("p", "idle")
+    b.on_status_event("p", "working")
+    b.on_status_event("p", "idle")
+    assert len(slack.posts) == 1
