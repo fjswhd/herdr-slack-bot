@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+LOG_FILE = ROOT / "herdr-slack.log"
+PID_FILE = ROOT / "herdr-slack.pid"
 REQUIRED = ("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_CHANNEL_ID", "SLACK_USER_ID")
 DEFAULT_PROJECTS_ROOT = Path(r"C:\Users\jmlee\projects\jmlee")
 DEFAULT_EVENT_PORT = 47615  # 플러그인 훅 → 봇 전달용 로컬 포트

@@ -34,13 +34,13 @@ def test_start_skips_when_already_running(tmp_path):
     s = listening_socket()
     spawned = []
     try:
-        msg = start(s.getsockname()[1], tmp_path / "bot.pid", spawn=lambda: spawned.append(1) or 123)
+        msg = start(s.getsockname()[1], spawn=lambda: spawned.append(1) or 123)
     finally:
         s.close()
     assert spawned == [] and "이미 실행 중" in msg
 
 
-def test_start_spawns_writes_pid_and_waits_for_port(tmp_path):
+def test_start_spawns_and_waits_for_port(tmp_path):
     port = free_port()
     holder = {}
 
@@ -51,14 +51,15 @@ def test_start_spawns_writes_pid_and_waits_for_port(tmp_path):
         return 4242
 
     try:
-        msg = start(port, tmp_path / "bot.pid", spawn=spawn, timeout=2)
+        msg = start(port, spawn=spawn, timeout=2)
     finally:
         holder["s"].close()
-    assert (tmp_path / "bot.pid").read_text() == "4242" and "시작" in msg
+    # pid 파일은 봇이 직접 기록(venv의 pythonw는 실제 Python을 자식으로 띄우는 중계 프로그램이라 spawn pid와 다름)
+    assert not (tmp_path / "bot.pid").exists() and "시작" in msg
 
 
 def test_start_reports_failure_when_port_never_opens(tmp_path):
-    msg = start(free_port(), tmp_path / "bot.pid", spawn=lambda: 1, timeout=0.3)
+    msg = start(free_port(), spawn=lambda: 1, timeout=0.3)
     assert "실패" in msg
 
 
@@ -82,3 +83,10 @@ def test_status_reports_pid(tmp_path):
         assert "실행 중" in status(s.getsockname()[1], pid_file) and "77" in status(s.getsockname()[1], pid_file)
     finally:
         s.close()
+
+
+def test_bot_records_its_own_pid(tmp_path):
+    import os
+    from herdr_slack.app import write_pid
+    write_pid(tmp_path / "bot.pid")
+    assert (tmp_path / "bot.pid").read_text() == str(os.getpid())

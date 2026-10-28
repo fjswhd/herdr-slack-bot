@@ -9,10 +9,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from herdr_slack.config import DEFAULT_EVENT_PORT, ROOT, read_env_file
-
-PID_FILE = ROOT / "herdr-slack.pid"
-LOG_FILE = ROOT / "herdr-slack.log"
+from herdr_slack.config import DEFAULT_EVENT_PORT, LOG_FILE, PID_FILE, ROOT, read_env_file
 
 
 def is_running(port: int) -> bool:
@@ -39,15 +36,16 @@ def _spawn_bot() -> int:
     return proc.pid
 
 
-def start(port: int, pid_file: Path, spawn: Callable[[], int] = _spawn_bot, timeout: float = 15) -> str:
+def start(port: int, spawn: Callable[[], int] = _spawn_bot, timeout: float = 15) -> str:
+    """봇을 띄우고 포트가 열릴 때까지 기다림. pid 파일은 봇이 직접 기록(venv의 pythonw는 실제 Python을
+    자식으로 띄우는 중계 프로그램이라, 여기서 얻는 pid로는 봇을 끌 수 없음)."""
     if is_running(port):
         return "봇이 이미 실행 중"
-    pid = spawn()
-    pid_file.write_text(str(pid))
+    spawn()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if is_running(port):
-            return f"봇 시작 (pid {pid})"
+            return "봇 시작"
         time.sleep(0.2)
     return f"봇 시작 실패: {timeout:g}초 안에 포트 {port}가 열리지 않음. {LOG_FILE} 확인"
 
@@ -73,7 +71,7 @@ def main() -> None:
     command = sys.argv[1] if len(sys.argv) > 1 else "status"
     port = int(read_env_file().get("HERDR_SLACK_PORT") or DEFAULT_EVENT_PORT)
     if command == "start":
-        msg = start(port, PID_FILE)
+        msg = start(port)
     elif command == "stop":
         msg = stop(PID_FILE)
     else:

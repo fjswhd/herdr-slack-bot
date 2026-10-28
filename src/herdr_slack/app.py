@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from pathlib import Path
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -9,7 +10,7 @@ from herdr_slack.blocks import agent_list, new_agent_modal
 from herdr_slack.bridge import Bridge
 from herdr_slack.channels import ChannelMap
 from herdr_slack.slack_ops import SlackOps
-from herdr_slack.config import ROOT, load_config, read_env_file
+from herdr_slack.config import LOG_FILE, PID_FILE, ROOT, load_config, read_env_file
 from herdr_slack.herdr import Herdr, HerdrError
 from herdr_slack.listener import serve
 from herdr_slack.routing import unescape_slack
@@ -21,8 +22,14 @@ USAGE = "사용법: `/herdr list` (pane 목록), `/herdr new` (새 에이전트 
 log = logging.getLogger("herdr_slack")
 
 
+def write_pid(path: Path = PID_FILE) -> None:
+    """봇 프로세스 자신의 pid. 플러그인 stop 동작이 이 값으로 봇을 끔."""
+    path.write_text(str(os.getpid()))
+
+
 def main() -> None:
-    logging.basicConfig(filename=ROOT / "herdr-slack.log", level=logging.INFO,
+    write_pid()
+    logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s", encoding="utf-8")
     cfg = load_config({**read_env_file(), **os.environ})
     app = App(token=cfg.bot_token)
