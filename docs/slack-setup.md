@@ -40,12 +40,13 @@ SLACK_USER_ID=U...
 봇은 herdr 플러그인으로 동작함. herdr가 시작될 때 봇 서버가 함께 켜지고, pane 상태 변화를 플러그인 이벤트로 받음. 최초 1회:
 
 ```
-uv sync
-herdr plugin link C:\Users\jmlee\projects\jmlee\ai-integration
+herdr plugin link <저장소 경로>
 ```
 
 - 확인: `herdr plugin list`에 `jmlee.herdr-slack ... enabled`.
-- 의존성이 바뀌면 `uv sync`를 직접 실행(링크된 플러그인은 build 단계를 실행하지 않음).
+- 플러그인 명령은 `uv run`으로 실행되므로 실행할 때마다 venv를 현재 저장소에 맞춤. 의존성 변경·폴더 이동 후 `uv sync` 불필요.
+- 폴더를 옮기면 링크 다시 연결: `herdr plugin unlink jmlee.herdr-slack` 후 새 경로로 `herdr plugin link`. herdr는 링크한 플러그인의 절대 경로를 저장함.
+- 폴더 이동 후 `pytest` 같은 venv 실행 파일은 옛 경로를 가리켜 실패. `uv sync --reinstall`로 다시 설치(봇을 중지한 상태에서).
 
 ## 5. 실행과 중지
 

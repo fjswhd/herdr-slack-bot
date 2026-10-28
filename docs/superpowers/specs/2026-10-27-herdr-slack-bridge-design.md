@@ -138,7 +138,7 @@
 - Slack 토큰은 코드 밖(환경 변수 또는 git에서 제외한 설정 파일)에 둠.
 
 ### 4.8 위치
-- 코드와 문서: `C:\Users\jmlee\projects\jmlee\ai-integration`. (Claude의 판단)
+- 코드와 문서: `C:\Users\jmlee\projects\jmlee\herdr-slack-bot`. (Claude의 판단)
 
 ## 5. 확인된 herdr 기능 (0.9.5 기준)
 

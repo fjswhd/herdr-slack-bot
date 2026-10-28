@@ -7,27 +7,27 @@ platforms = ["windows"]
 
 # herdr가 시작될 때 봇 서버를 함께 띄움. 이미 실행 중이면 건너뜀.
 [[startup]]
-command = ["uv", "run", "--no-sync", "python", "-m", "herdr_slack.daemon", "start"]
+command = ["uv", "run", "python", "-m", "herdr_slack.daemon", "start"]
 
 [[actions]]
 id = "start"
 title = "Slack 봇 시작"
 contexts = ["workspace"]
-command = ["uv", "run", "--no-sync", "python", "-m", "herdr_slack.daemon", "start"]
+command = ["uv", "run", "python", "-m", "herdr_slack.daemon", "start"]
 
 [[actions]]
 id = "stop"
 title = "Slack 봇 중지"
 contexts = ["workspace"]
-command = ["uv", "run", "--no-sync", "python", "-m", "herdr_slack.daemon", "stop"]
+command = ["uv", "run", "python", "-m", "herdr_slack.daemon", "stop"]
 
 [[actions]]
 id = "status"
 title = "Slack 봇 상태"
 contexts = ["workspace"]
-command = ["uv", "run", "--no-sync", "python", "-m", "herdr_slack.daemon", "status"]
+command = ["uv", "run", "python", "-m", "herdr_slack.daemon", "status"]
 
 # pane 상태 변화를 실행 중인 봇에 전달
 [[events]]
 on = "pane.agent_status_changed"
-command = ["uv", "run", "--no-sync", "python", "-m", "herdr_slack.hook"]
+command = ["uv", "run", "python", "-m", "herdr_slack.hook"]
