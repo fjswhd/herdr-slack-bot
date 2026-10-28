@@ -85,7 +85,7 @@ class FakeHerdr:
 
     def start_agent(self, name, kind, pane_id):
         self._rec("start_agent", name, kind, pane_id)
-        self.agents.append(agent(pane=pane_id, terminal="t9", kind=kind, ws="w9"))
+        self.agents.append(agent(pane=pane_id, kind=kind, ws="w9"))
 
 
 def run_now(delay, fn):
@@ -110,8 +110,8 @@ def test_done_event_creates_workspace_channel_and_posts_there(tmp_path):
     assert slack.created == ["herdr-proj"]
     [p] = slack.posts
     assert p.channel == "C-herdr-proj" and p.thread_ts is None
-    assert store.get(p.ts) == PaneRef("p", "t1", "claude")
-    assert channels.last_of("w") == PaneRef("p", "t1", "claude")
+    assert store.get(p.ts) == PaneRef("p")
+    assert channels.last_of("w") == PaneRef("p")
 
 
 def test_second_event_reuses_channel(tmp_path):
@@ -177,14 +177,14 @@ def test_failing_body_still_posts_headline(tmp_path):
 # --- 채널 메시지 ---
 
 def two_agents():
-    return [agent(pane="w:p1", terminal="t1", kind="claude", status="idle"),
-            agent(pane="w:p2", terminal="t2", kind="codex", status="idle")]
+    return [agent(pane="w:p1", kind="claude", status="idle"),
+            agent(pane="w:p2", kind="codex", status="idle")]
 
 
 def test_channel_message_goes_to_last_notified_pane(tmp_path):
     b, herdr, slack, _, channels = make_bridge(tmp_path, agents=two_agents())
     channels.set_channel("w", "C1")
-    channels.set_last("w", PaneRef("w:p2", "t2"))
+    channels.set_last("w", PaneRef("w:p2"))
     b.handle_message("C1", "50.0", "다음 작업")
     assert herdr.calls[-1] == ("prompt", "w:p2", "다음 작업")
     assert ("C1", "50.0", "white_check_mark") in slack.reactions
@@ -193,10 +193,10 @@ def test_channel_message_goes_to_last_notified_pane(tmp_path):
 def test_channel_message_with_kind_prefix_targets_that_agent(tmp_path):
     b, herdr, slack, _, channels = make_bridge(tmp_path, agents=two_agents())
     channels.set_channel("w", "C1")
-    channels.set_last("w", PaneRef("w:p2", "t2"))
+    channels.set_last("w", PaneRef("w:p2"))
     b.handle_message("C1", "50.0", "claude: 리뷰해줘")
     assert herdr.calls[-1] == ("prompt", "w:p1", "리뷰해줘")
-    assert channels.last_of("w") == PaneRef("w:p1", "t1", "claude")
+    assert channels.last_of("w") == PaneRef("w:p1")
 
 
 def test_single_agent_without_last_is_default_target(tmp_path):
@@ -252,24 +252,24 @@ def test_channel_message_when_blocked_sends_key(tmp_path):
     assert herdr.calls[-1] == ("send_keys", "w:p1", ["1"])
 
 
-def test_last_pane_with_changed_terminal_is_not_used(tmp_path):
+def test_last_pane_without_agent_is_not_used(tmp_path):
     b, herdr, slack, _, channels = make_bridge(tmp_path, agents=two_agents())
     channels.set_channel("w", "C1")
-    channels.set_last("w", PaneRef("w:p2", "old"))
+    channels.set_last("w", PaneRef("w:p9"))
     b.handle_message("C1", "50.0", "hi")
     assert herdr.calls == [] and "claude:" in slack.posts[-1].text
 
 
 def test_thread_reply_still_routes_to_notification_pane(tmp_path):
     b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="idle")])
-    store.put("9.0", PaneRef("p", "t1"))
+    store.put("9.0", PaneRef("p"))
     b.handle_message("C1", "50.0", "다음 작업", thread_ts="9.0")
     assert herdr.calls[-1] == ("prompt", "p", "다음 작업")
 
 
-def test_thread_reply_rejected_when_terminal_changed(tmp_path):
-    b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="idle", terminal="t2")])
-    store.put("9.0", PaneRef("p", "t1"))
+def test_thread_reply_rejected_when_pane_has_no_agent(tmp_path):
+    b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(pane="other", status="idle")])
+    store.put("9.0", PaneRef("p"))
     b.handle_message("C1", "50.0", "hi", thread_ts="9.0")
     assert herdr.calls_of("prompt") == [] and "더 이상 없음" in slack.posts[-1].text
 
@@ -296,7 +296,7 @@ def test_message_reports_internal_error(tmp_path):
 
 def test_action_choice_sends_key_and_reacts(tmp_path):
     b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="blocked")])
-    store.put("9.0", PaneRef("p", "t1"))
+    store.put("9.0", PaneRef("p"))
     b.handle_action("C1", "9.0", "choice_2", "p")
     assert herdr.calls[-1] == ("send_keys", "p", ["2"])
     assert ("C1", "9.0", "white_check_mark") in slack.reactions
@@ -304,14 +304,14 @@ def test_action_choice_sends_key_and_reacts(tmp_path):
 
 def test_action_esc_sends_esc(tmp_path):
     b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="blocked")])
-    store.put("9.0", PaneRef("p", "t1"))
+    store.put("9.0", PaneRef("p"))
     b.handle_action("C1", "9.0", "esc", "p")
     assert herdr.calls[-1] == ("send_keys", "p", ["esc"])
 
 
 def test_action_full_posts_split_response_in_thread(tmp_path):
     b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="idle")], screen="● " + "a" * 5000)
-    store.put("9.0", PaneRef("p", "t1"))
+    store.put("9.0", PaneRef("p"))
     b.handle_action("C1", "9.0", "full", "p")
     assert len(slack.posts) == 2 and all(p.thread_ts == "9.0" and p.channel == "C1" for p in slack.posts)
 
@@ -319,15 +319,15 @@ def test_action_full_posts_split_response_in_thread(tmp_path):
 def test_action_screen_splits_long_screen(tmp_path):
     screen = "\n".join("y" * 500 for _ in range(60))
     b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="idle")], screen=screen)
-    store.put("9.0", PaneRef("p", "t1"))
+    store.put("9.0", PaneRef("p"))
     b.handle_action("C1", "9.0", "screen", "p")
     sections = [blk["text"]["text"] for p in slack.posts for blk in p.blocks if blk["type"] == "section"]
     assert len(slack.posts) > 1 and all(len(t) <= 3000 for t in sections)
 
 
-def test_action_rejected_when_terminal_changed(tmp_path):
-    b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="blocked", terminal="t2")])
-    store.put("9.0", PaneRef("p", "t1"))
+def test_action_rejected_when_pane_has_no_agent(tmp_path):
+    b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(pane="other", status="blocked")])
+    store.put("9.0", PaneRef("p"))
     b.handle_action("C1", "9.0", "esc", "p")
     assert herdr.calls == [] and "더 이상 없음" in slack.posts[-1].text
 
@@ -341,7 +341,7 @@ def test_start_new_creates_folder_workspace_agent_channel_and_prompt(tmp_path):
     assert [c[0] for c in herdr.calls] == ["create_workspace", "start_agent", "prompt"]
     assert herdr.calls[1] == ("start_agent", "idea", "codex", "w9:p1")
     assert channels.channel_of("w9") == "C-herdr-idea"
-    assert channels.last_of("w9") == PaneRef("w9:p1", "t9", "codex")
+    assert channels.last_of("w9") == PaneRef("w9:p1")
     assert slack.posts[-1].channel == "C-herdr-idea"
 
 
@@ -470,28 +470,29 @@ def test_same_screen_response_twice_posts_once(tmp_path):
     assert len(slack.posts) == 1
 
 
-# --- herdr 재시작 후 같은 pane ---
+# --- 같은 pane이면 터미널·에이전트가 바뀌어도 전달 ---
 
-def test_reply_allowed_after_restart_when_pane_and_kind_match(tmp_path):
-    # herdr 재시작으로 터미널 ID만 바뀐 같은 pane·같은 종류 에이전트
-    b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="idle", terminal="t-new", kind="claude")])
-    store.put("9.0", PaneRef("p", "t-old", "claude"))
+def test_reply_goes_to_whatever_agent_is_in_the_pane_now(tmp_path):
+    # herdr 재시작으로 터미널이 바뀌었거나, 같은 pane에서 다른 에이전트를 띄운 경우
+    b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="idle", kind="codex")])
+    store.put("9.0", PaneRef("p"))
     b.handle_message("C1", "50.0", "다음 작업", thread_ts="9.0")
     assert herdr.calls[-1] == ("prompt", "p", "다음 작업")
 
 
-def test_reply_rejected_when_kind_changed(tmp_path):
-    b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="idle", terminal="t-new", kind="codex")])
-    store.put("9.0", PaneRef("p", "t-old", "claude"))
-    b.handle_message("C1", "50.0", "hi", thread_ts="9.0")
-    assert herdr.calls_of("prompt") == [] and "더 이상 없음" in slack.posts[-1].text
+def test_store_reads_old_entries_with_extra_fields(tmp_path):
+    # pane_id 외 필드(terminal_id 등)를 함께 저장하던 때의 기록
+    (tmp_path / "threads.json").write_text('{"9.0": {"pane_id": "p", "terminal_id": "t-old"}}', encoding="utf-8")
+    b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="idle")])
+    b.handle_message("C1", "50.0", "다음 작업", thread_ts="9.0")
+    assert herdr.calls[-1] == ("prompt", "p", "다음 작업")
 
 
 def test_channel_default_target_survives_restart(tmp_path):
     b, herdr, slack, _, channels = make_bridge(tmp_path, agents=[
-        agent(pane="w:p1", terminal="n1", kind="claude", status="idle"),
-        agent(pane="w:p2", terminal="n2", kind="codex", status="idle")])
+        agent(pane="w:p1", kind="claude", status="idle"),
+        agent(pane="w:p2", kind="codex", status="idle")])
     channels.set_channel("w", "C1")
-    channels.set_last("w", PaneRef("w:p2", "old", "codex"))
+    channels.set_last("w", PaneRef("w:p2"))
     b.handle_message("C1", "50.0", "hi")
     assert herdr.calls[-1] == ("prompt", "w:p2", "hi")

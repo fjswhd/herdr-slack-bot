@@ -9,8 +9,11 @@ MAX_ENTRIES = 500
 @dataclass
 class PaneRef:
     pane_id: str
-    terminal_id: str
-    kind: str = ""  # 에이전트 종류. 비어 있으면 종류를 저장하기 전의 기록
+
+    @classmethod
+    def load(cls, d: dict) -> "PaneRef":
+        # 예전에는 terminal_id 등도 저장했으므로 pane_id만 읽음
+        return cls(d["pane_id"])
 
 
 class ThreadStore:
@@ -30,4 +33,4 @@ class ThreadStore:
 
     def get(self, ts: str) -> PaneRef | None:
         d = self._data.get(ts)
-        return PaneRef(**d) if d else None
+        return PaneRef.load(d) if d else None

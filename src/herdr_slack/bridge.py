@@ -44,7 +44,7 @@ def _start_timer(delay: float, fn: Callable[[], None]) -> None:
 
 
 def _ref(a: Agent) -> PaneRef:
-    return PaneRef(a.pane_id, a.terminal_id, a.kind)
+    return PaneRef(a.pane_id)
 
 
 def _text_blocks(text: str) -> list[dict]:
@@ -171,19 +171,10 @@ class Bridge:
     # --- 사용자 입력 ---
 
     def _live(self, ref: PaneRef | None, agents: list[Agent]) -> Agent | None:
-        """기록된 pane에 아직 같은 에이전트가 있으면 그 Agent.
-
-        같은 터미널이거나, herdr 재시작으로 터미널 ID만 바뀐 같은 종류의 에이전트면 같은 것으로 봄.
-        종류를 저장하기 전의 기록은 터미널 ID로만 판단.
-        """
+        """기록된 pane에 지금 떠 있는 에이전트. herdr 재시작이나 에이전트 교체와 상관없이 그 pane의 에이전트가 대상."""
         if ref is None:
             return None
-        a = next((a for a in agents if a.pane_id == ref.pane_id), None)
-        if a is None:
-            return None
-        if a.terminal_id == ref.terminal_id or (ref.kind and a.kind == ref.kind):
-            return a
-        return None
+        return next((a for a in agents if a.pane_id == ref.pane_id), None)
 
     def _pick_target(self, channel: str, text: str) -> tuple[Agent | None, str]:
         """채널 메시지의 대상 에이전트와 보낼 본문. 정할 수 없으면 채널에 안내하고 None."""

@@ -46,4 +46,4 @@ class ChannelMap:
 
     def last_of(self, workspace_id: str) -> PaneRef | None:
         d = self._data.get(workspace_id, {}).get("last")
-        return PaneRef(**d) if d else None
+        return PaneRef.load(d) if d else None

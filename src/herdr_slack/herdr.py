@@ -15,7 +15,6 @@ class HerdrError(Exception):
 class Agent:
     pane_id: str
     workspace_id: str
-    terminal_id: str
     kind: str
     status: str
     cwd: str
@@ -60,13 +59,13 @@ class Herdr:
             Agent(
                 pane_id=a["pane_id"],
                 workspace_id=a.get("workspace_id", ""),
-                terminal_id=a.get("terminal_id", ""),
                 kind=a.get("agent") or "",
                 status=a.get("agent_status", "unknown"),
                 cwd=a.get("cwd", ""),
                 title=a.get("terminal_title_stripped") or "",
                 completion_seq=a.get("completion_seq", 0),
-                session_id=(a.get("agent_session") or {}).get("value"),            )
+                session_id=(a.get("agent_session") or {}).get("value"),
+            )
             for a in agents
         ]
 
