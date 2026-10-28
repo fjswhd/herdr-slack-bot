@@ -10,6 +10,7 @@ MAX_ENTRIES = 500
 class PaneRef:
     pane_id: str
     terminal_id: str
+    kind: str = ""  # 에이전트 종류. 비어 있으면 종류를 저장하기 전의 기록
 
 
 class ThreadStore:

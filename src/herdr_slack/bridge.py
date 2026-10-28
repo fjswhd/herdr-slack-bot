@@ -43,6 +43,10 @@ def _start_timer(delay: float, fn: Callable[[], None]) -> None:
     t.start()
 
 
+def _ref(a: Agent) -> PaneRef:
+    return PaneRef(a.pane_id, a.terminal_id, a.kind)
+
+
 def _text_blocks(text: str) -> list[dict]:
     return [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
 
@@ -155,7 +159,7 @@ class Bridge:
             # 본문을 만들지 못해도 알림 자체는 보냄. 내용은 [화면 보기]로 확인.
             log.exception("알림 본문 생성 실패: %s", a.pane_id)
             note = blocks.notification(e, "(본문을 읽지 못함)", [])
-        ref = PaneRef(a.pane_id, a.terminal_id)
+        ref = _ref(a)
         try:
             ts = self._slack.post(self._channel_for(a.workspace_id), note, blocks.headline(e), None)
         except Exception:
@@ -167,10 +171,19 @@ class Bridge:
     # --- 사용자 입력 ---
 
     def _live(self, ref: PaneRef | None, agents: list[Agent]) -> Agent | None:
-        """기록된 pane이 아직 같은 터미널일 때만 그 Agent."""
+        """기록된 pane에 아직 같은 에이전트가 있으면 그 Agent.
+
+        같은 터미널이거나, herdr 재시작으로 터미널 ID만 바뀐 같은 종류의 에이전트면 같은 것으로 봄.
+        종류를 저장하기 전의 기록은 터미널 ID로만 판단.
+        """
         if ref is None:
             return None
-        return next((a for a in agents if a.pane_id == ref.pane_id and a.terminal_id == ref.terminal_id), None)
+        a = next((a for a in agents if a.pane_id == ref.pane_id), None)
+        if a is None:
+            return None
+        if a.terminal_id == ref.terminal_id or (ref.kind and a.kind == ref.kind):
+            return a
+        return None
 
     def _pick_target(self, channel: str, text: str) -> tuple[Agent | None, str]:
         """채널 메시지의 대상 에이전트와 보낼 본문. 정할 수 없으면 채널에 안내하고 None."""
@@ -187,7 +200,7 @@ class Bridge:
             if len(same) > 1:
                 self._say(channel, f"`{kind}` 에이전트가 {len(same)}개라 대상을 정할 수 없음.")
                 return None, text
-            self._channels.set_last(ws, PaneRef(same[0].pane_id, same[0].terminal_id))
+            self._channels.set_last(ws, _ref(same[0]))
             return same[0], body
         target = self._live(self._channels.last_of(ws), agents)
         if target is None and len(agents) == 1:
@@ -215,7 +228,7 @@ class Bridge:
             match action:
                 case Busy():
                     key = uuid.uuid4().hex[:12]
-                    self._pending[key] = (PaneRef(a.pane_id, a.terminal_id), text)
+                    self._pending[key] = (_ref(a), text)
                     self._slack.post(channel, blocks.busy_notice(key), "지금 작업 중", thread_ts)
                     return
                 case Prompt():
@@ -301,7 +314,7 @@ class Bridge:
         channel = self._channel_for(ws)
         a = next((a for a in self._herdr.list_agents() if a.pane_id == pane_id), None)
         if a is not None:
-            self._channels.set_last(ws, PaneRef(a.pane_id, a.terminal_id))
+            self._channels.set_last(ws, _ref(a))
         self._say(channel, f"`{name}` 시작 ({kind}, `{folder}`). 이 채널에 메시지를 쓰면 에이전트에게 전달됩니다.")
         if prompt.strip():
             self._herdr.prompt(pane_id, prompt)

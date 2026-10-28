@@ -110,8 +110,8 @@ def test_done_event_creates_workspace_channel_and_posts_there(tmp_path):
     assert slack.created == ["herdr-proj"]
     [p] = slack.posts
     assert p.channel == "C-herdr-proj" and p.thread_ts is None
-    assert store.get(p.ts) == PaneRef("p", "t1")
-    assert channels.last_of("w") == PaneRef("p", "t1")
+    assert store.get(p.ts) == PaneRef("p", "t1", "claude")
+    assert channels.last_of("w") == PaneRef("p", "t1", "claude")
 
 
 def test_second_event_reuses_channel(tmp_path):
@@ -196,7 +196,7 @@ def test_channel_message_with_kind_prefix_targets_that_agent(tmp_path):
     channels.set_last("w", PaneRef("w:p2", "t2"))
     b.handle_message("C1", "50.0", "claude: 리뷰해줘")
     assert herdr.calls[-1] == ("prompt", "w:p1", "리뷰해줘")
-    assert channels.last_of("w") == PaneRef("w:p1", "t1")
+    assert channels.last_of("w") == PaneRef("w:p1", "t1", "claude")
 
 
 def test_single_agent_without_last_is_default_target(tmp_path):
@@ -341,7 +341,7 @@ def test_start_new_creates_folder_workspace_agent_channel_and_prompt(tmp_path):
     assert [c[0] for c in herdr.calls] == ["create_workspace", "start_agent", "prompt"]
     assert herdr.calls[1] == ("start_agent", "idea", "codex", "w9:p1")
     assert channels.channel_of("w9") == "C-herdr-idea"
-    assert channels.last_of("w9") == PaneRef("w9:p1", "t9")
+    assert channels.last_of("w9") == PaneRef("w9:p1", "t9", "codex")
     assert slack.posts[-1].channel == "C-herdr-idea"
 
 
@@ -468,3 +468,30 @@ def test_same_screen_response_twice_posts_once(tmp_path):
     b.on_status_event("p", "working")
     b.on_status_event("p", "idle")
     assert len(slack.posts) == 1
+
+
+# --- herdr 재시작 후 같은 pane ---
+
+def test_reply_allowed_after_restart_when_pane_and_kind_match(tmp_path):
+    # herdr 재시작으로 터미널 ID만 바뀐 같은 pane·같은 종류 에이전트
+    b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="idle", terminal="t-new", kind="claude")])
+    store.put("9.0", PaneRef("p", "t-old", "claude"))
+    b.handle_message("C1", "50.0", "다음 작업", thread_ts="9.0")
+    assert herdr.calls[-1] == ("prompt", "p", "다음 작업")
+
+
+def test_reply_rejected_when_kind_changed(tmp_path):
+    b, herdr, slack, store, _ = make_bridge(tmp_path, agents=[agent(status="idle", terminal="t-new", kind="codex")])
+    store.put("9.0", PaneRef("p", "t-old", "claude"))
+    b.handle_message("C1", "50.0", "hi", thread_ts="9.0")
+    assert herdr.calls_of("prompt") == [] and "더 이상 없음" in slack.posts[-1].text
+
+
+def test_channel_default_target_survives_restart(tmp_path):
+    b, herdr, slack, _, channels = make_bridge(tmp_path, agents=[
+        agent(pane="w:p1", terminal="n1", kind="claude", status="idle"),
+        agent(pane="w:p2", terminal="n2", kind="codex", status="idle")])
+    channels.set_channel("w", "C1")
+    channels.set_last("w", PaneRef("w:p2", "old", "codex"))
+    b.handle_message("C1", "50.0", "hi")
+    assert herdr.calls[-1] == ("prompt", "w:p2", "hi")
